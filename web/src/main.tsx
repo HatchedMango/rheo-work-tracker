@@ -1,0 +1,863 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  Inbox,
+  Layers3,
+  Plug,
+  Plus,
+  ArrowUpRight,
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  Search,
+  Circle,
+  X,
+  TerminalSquare,
+  Activity,
+  Link as LinkIcon,
+} from 'lucide-react';
+import type { Detail } from '../../src/db/schema.js';
+import type { WorkList, Status } from '../../src/services/work.js';
+import type { Action, Content } from '../../src/shared/contracts.js';
+import {
+  activeStatuses,
+  historyStatuses,
+  statusLabels,
+  workStatus,
+} from '../../src/shared/work-status.js';
+import type { WorkStatus } from '../../src/shared/work-status.js';
+import './styles.css';
+import { Connections } from './Connections.js';
+const views = ['active', 'history'] as const;
+type View = 'inbox' | 'connections' | (typeof views)[number];
+type StatusFilter = 'any' | WorkStatus;
+class RequestError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+let sessionRequest: Promise<void> | undefined;
+function ensureLocalSession(): Promise<void> {
+  if (!sessionRequest) {
+    sessionRequest = (async () => {
+      const response = await fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!response.ok) {
+        const result = await response.json();
+        throw new RequestError(
+          response.status,
+          result.message || 'Could not open the local workspace.',
+        );
+      }
+    })().catch((error) => {
+      sessionRequest = undefined;
+      throw error;
+    });
+  }
+  return sessionRequest;
+}
+async function api<T>(path: string, body?: unknown, method = 'POST'): Promise<T> {
+  const send = () =>
+    fetch(`/api${path}`, {
+      method: body === undefined ? 'GET' : method,
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  await ensureLocalSession();
+  const attemptedSession = sessionRequest;
+  let r = await send();
+  // An expired/cleared cookie renews silently. Only an explicit 401 is retried;
+  // uncertain writes and network failures are never blindly replayed.
+  if (r.status === 401) {
+    if (sessionRequest === attemptedSession) sessionRequest = undefined;
+    await ensureLocalSession();
+    r = await send();
+  }
+  const result = await r.json();
+  if (!r.ok) throw new RequestError(r.status, result.message || 'Request failed.');
+  return result;
+}
+function currentLocation(): { view: View; id: string | null; filter: StatusFilter } {
+  const params = new URLSearchParams(location.search);
+  const raw = params.get('view') || 'inbox';
+  const legacy: Record<string, { view: View; filter: StatusFilter }> = {
+    settings: { view: 'connections', filter: 'any' },
+    all: { view: 'active', filter: 'any' },
+    backlog: { view: 'active', filter: 'backlog' },
+    queued: { view: 'active', filter: 'queued' },
+    running: { view: 'active', filter: 'running' },
+    review: { view: 'active', filter: 'review' },
+    completed: { view: 'history', filter: 'completed' },
+    cancelled: { view: 'history', filter: 'cancelled' },
+  };
+  const view =
+    legacy[raw]?.view ||
+    (['inbox', 'connections', ...views].includes(raw) ? (raw as View) : 'inbox');
+  const requested = params.get('status') || legacy[raw]?.filter || 'any';
+  const allowed: readonly string[] =
+    view === 'history' ? historyStatuses : view === 'active' ? activeStatuses : [];
+  const filter = allowed.includes(requested) ? (requested as WorkStatus) : 'any';
+  return { view, id: params.get('work'), filter };
+}
+function time(n: number) {
+  return new Date(n).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+function Badge({ state }: { state: string }) {
+  return (
+    <span className={`badge ${state}`}>
+      {state === 'review'
+        ? 'Review ready'
+        : statusLabels[state as WorkStatus]?.toLowerCase() || state.replaceAll('_', ' ')}
+    </span>
+  );
+}
+function App() {
+  const [route, setRoute] = useState(currentLocation);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [list, setList] = useState<WorkList>({ items: [], total: 0 });
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [refresh, setRefresh] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [compose, setCompose] = useState<'edit' | null>(null);
+  const [note, setNote] = useState('');
+  const [changes, setChanges] = useState('');
+  const dialog = useRef<HTMLDialogElement>(null);
+  const navigate = (
+    view: View,
+    id: string | null = null,
+    filter: StatusFilter = view === route.view ? route.filter : 'any',
+  ) => {
+    const p = new URLSearchParams({ view });
+    if (id) p.set('work', id);
+    if (filter !== 'any') p.set('status', filter);
+    history.pushState({}, '', `/?${p}`);
+    setRoute({ view, id, filter });
+    setError('');
+    if (view !== route.view || filter !== route.filter) setOffset(0);
+  };
+  useEffect(() => {
+    const listener = () => {
+      setRoute(currentLocation());
+      setOffset(0);
+    };
+    addEventListener('popstate', listener);
+    return () => removeEventListener('popstate', listener);
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSearch(query);
+      setOffset(0);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query]);
+  useEffect(() => {
+    // Remove legacy login fragments; old bookmarks now open the workspace directly.
+    if (location.hash.startsWith('#login='))
+      history.replaceState({}, '', location.pathname + location.search);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [s, l, d] = await Promise.all([
+          api<Status>('/status'),
+          route.view === 'connections'
+            ? Promise.resolve({ items: [], total: 0 })
+            : api<WorkList>(
+                `/work?${new URLSearchParams({ view: route.view, status: route.filter, q: search, limit: '40', offset: String(offset) })}`,
+              ),
+          route.id ? api<Detail>(`/work/${route.id}`) : Promise.resolve(null),
+        ]);
+        if (!cancelled) {
+          setStatus(s);
+          setList(l);
+          setDetail(d);
+          setLoading(false);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError((e as Error).message);
+          setLoading(false);
+        }
+      }
+    }
+    setLoading(true);
+    void load();
+    const timer = setInterval(() => {
+      if (!document.hidden) void load();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [route.view, route.id, route.filter, search, offset, refresh]);
+  useEffect(() => {
+    setNote('');
+    setChanges('');
+  }, [route.id]);
+  useEffect(() => {
+    if (compose) {
+      dialog.current?.showModal();
+    } else dialog.current?.close();
+  }, [compose]);
+  async function mutate(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+      setRefresh((v) => v + 1);
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function action(action: Action['action']) {
+    if (!detail) return;
+    if (
+      await mutate(async () => {
+        setDetail(
+          await api<Detail>(`/work/${detail.id}/actions`, {
+            action,
+            revision: detail.revision,
+            message: changes,
+          }),
+        );
+      })
+    )
+      setChanges('');
+  }
+  async function save(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const f = new FormData(event.currentTarget);
+    const ref = String(f.get('reference') || '').trim();
+    const body: Content = {
+      title: String(f.get('title')),
+      objective: String(f.get('objective')),
+      priority: String(f.get('priority')) as Content['priority'],
+      acceptanceCriteria: String(f.get('criteria'))
+        .split('\n')
+        .map((x) => x.trim())
+        .filter(Boolean),
+      references: ref ? [{ system: 'link', url: ref }] : [],
+    };
+    if (!detail) return;
+    body.references = [...detail.references.map(({ system, url }) => ({ system, url }))];
+    if (ref && !body.references.some((r) => r.url === ref))
+      body.references.push({ system: 'link', url: ref });
+    await mutate(async () => {
+      const d = await api<Detail>(
+        `/work/${detail.id}`,
+        { ...body, revision: detail.revision },
+        'PUT',
+      );
+      setCompose(null);
+      navigate(route.view, d.id);
+    });
+  }
+  const inbox = route.view === 'inbox';
+  const settings = route.view === 'connections';
+  const title = inbox ? 'Inbox' : settings ? 'Connections' : 'Work';
+  const run = detail?.runs.find((r) =>
+    ['queued', 'claimed', 'running', 'awaiting_review'].includes(r.state),
+  );
+  const editable = detail?.lifecycle === 'open' && !run;
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <a
+          href="/"
+          className="brand"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate('inbox');
+          }}
+        >
+          <span className="brand-icon">
+            <Layers3 size={21} />
+          </span>
+          Work Inbox
+        </a>
+        <nav aria-label="Primary">
+          <button className={inbox ? 'selected' : ''} onClick={() => navigate('inbox')}>
+            <Inbox size={18} />
+            Inbox<span className="nav-count">{status?.inboxCount || 0}</span>
+          </button>
+          <button
+            className={!inbox && !settings ? 'selected' : ''}
+            onClick={() => navigate('active')}
+          >
+            <Layers3 size={18} />
+            Work
+          </button>
+          <button className={settings ? 'selected' : ''} onClick={() => navigate('connections')}>
+            <Plug size={18} />
+            Connections
+          </button>
+        </nav>
+        <div className="sidebar-note">
+          <span className="dot" />
+          <strong>No execution worker connected</strong>
+        </div>
+      </aside>
+      <main className={`main ${route.id ? 'has-selection' : ''}`}>
+        <header className="page-header">
+          <h1>{title}</h1>
+        </header>
+        {error && (
+          <div role="alert" className="error-banner">
+            {error}
+            <button
+              onClick={() => {
+                setError('');
+                setRefresh((v) => v + 1);
+              }}
+            >
+              Retry
+            </button>
+            <button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}>
+              <X size={16} />
+            </button>
+          </div>
+        )}
+        {settings ? (
+          <Connections request={api} />
+        ) : (
+          <>
+            <div className="toolbar">
+              {inbox ? (
+                <span className="list-count">
+                  {list.total} {list.total === 1 ? 'item' : 'items'}
+                </span>
+              ) : (
+                <div className="work-controls">
+                  <div className="tabs" role="group" aria-label="Work views">
+                    {views.map((v) => (
+                      <button
+                        key={v}
+                        className={route.view === v ? 'active' : ''}
+                        aria-pressed={route.view === v}
+                        onClick={() => navigate(v)}
+                      >
+                        {v === 'active' ? 'Active' : 'History'}
+                        {route.view === v && <span>{list.total}</span>}
+                      </button>
+                    ))}
+                  </div>
+                  <select
+                    aria-label="Filter by status"
+                    value={route.filter}
+                    onChange={(e) => navigate(route.view, null, e.target.value as StatusFilter)}
+                  >
+                    <option value="any">All statuses</option>
+                    {(route.view === 'history' ? historyStatuses : activeStatuses).map((value) => (
+                      <option key={value} value={value}>
+                        {statusLabels[value]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <label className="search">
+                <Search size={16} />
+                <input
+                  aria-label="Search work"
+                  placeholder="Search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </label>
+            </div>
+            <div className={`workspace ${route.id ? 'with-detail' : ''}`}>
+              <section className="work-list" aria-label="Work items">
+                {loading && list.items.length === 0 ? (
+                  <p className="list-loading" role="status">
+                    Loading your work…
+                  </p>
+                ) : list.items.length === 0 ? (
+                  <div className="empty-state">
+                    <h2>
+                      {search
+                        ? 'No matches'
+                        : inbox
+                          ? 'Inbox empty'
+                          : route.filter !== 'any'
+                            ? `No ${statusLabels[route.filter].toLowerCase()} work`
+                            : route.view === 'history'
+                              ? 'No history'
+                              : 'No active work'}
+                    </h2>
+                    {!search &&
+                      ['inbox', 'active'].includes(route.view) &&
+                      route.filter === 'any' && (
+                        <p>
+                          {inbox
+                            ? 'New assignments and results appear here.'
+                            : 'Work arrives through connected agents.'}
+                        </p>
+                      )}
+                    {!search &&
+                      ['inbox', 'active'].includes(route.view) &&
+                      route.filter === 'any' && (
+                        <button className="text-button" onClick={() => navigate('connections')}>
+                          Connect an agent <ArrowUpRight size={14} />
+                        </button>
+                      )}
+                  </div>
+                ) : (
+                  list.items.map((w) => {
+                    const state = workStatus(w, w.run, w.assignment);
+                    return (
+                      <button
+                        className={`work-card ${route.id === w.id ? 'chosen' : ''}`}
+                        key={w.id}
+                        onClick={() => navigate(route.view, w.id)}
+                      >
+                        <div className="card-top">
+                          <span className={`priority ${w.priority}`}>
+                            <span />
+                            {w.priority}
+                          </span>
+                          <span className="card-date">
+                            {new Date(w.createdAt).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                            })}
+                          </span>
+                        </div>
+                        <h3>{w.title}</h3>
+                        <p>{w.objective}</p>
+                        <div className="card-bottom">
+                          <Badge state={state} />
+                          <span className="attention-label">
+                            {w.attention.some((a) => a.kind === 'failure')
+                              ? 'Needs attention'
+                              : w.attention.some((a) => a.kind === 'assignment')
+                                ? 'Accept assignment'
+                                : w.attention.some((a) => a.kind === 'review')
+                                  ? 'Review result'
+                                  : state === 'accepted'
+                                    ? 'Ready when you are'
+                                    : ''}
+                          </span>
+                          <ChevronRight size={15} />
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+                {list.total > 40 && (
+                  <div className="pagination">
+                    <button
+                      disabled={!offset}
+                      onClick={() => setOffset((o) => Math.max(0, o - 40))}
+                    >
+                      Previous
+                    </button>
+                    <span>
+                      {offset + 1}–{Math.min(offset + 40, list.total)} / {list.total}
+                    </span>
+                    <button
+                      disabled={offset + 40 >= list.total}
+                      onClick={() => setOffset((o) => o + 40)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </section>
+              {route.id ? (
+                <section className="detail" aria-label="Work detail">
+                  <div className="detail-top">
+                    <button className="text-button" onClick={() => navigate(route.view)}>
+                      <ArrowLeft size={15} />
+                      Back to list
+                    </button>
+                    <button
+                      className="icon-button"
+                      aria-label="Close detail"
+                      onClick={() => navigate(route.view)}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  {!detail || detail.id !== route.id ? (
+                    <p role="status">Loading detail…</p>
+                  ) : (
+                    <>
+                      <div className="detail-meta">
+                        <Badge
+                          state={workStatus(detail, detail.runs[0] || null, detail.assignment)}
+                        />
+                        <span className={`priority ${detail.priority}`}>
+                          <span />
+                          {detail.priority}
+                        </span>
+                      </div>
+                      <h2 className="detail-title">{detail.title}</h2>
+                      <div className="owner-line">
+                        <span>{detail.ownerId ? 'Assigned to you' : 'Unassigned'}</span>
+                        <span className="separator">/</span>
+                        <span>Created {time(detail.createdAt)}</span>
+                      </div>
+                      <div className="detail-section">
+                        <h3>Objective</h3>
+                        <p className="preserve">{detail.objective}</p>
+                      </div>
+                      {detail.acceptanceCriteria.length > 0 && (
+                        <div className="detail-section">
+                          <h3>Acceptance criteria</h3>
+                          <ul className="criteria">
+                            {detail.acceptanceCriteria.map((c, i) => (
+                              <li key={i}>
+                                <Circle size={13} />
+                                {c}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {detail.references.length > 0 && (
+                        <div className="detail-section">
+                          <h3>References</h3>
+                          {detail.references.map((r) => (
+                            <a
+                              className="reference"
+                              key={r.id}
+                              href={r.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <LinkIcon size={14} />
+                              {r.system}
+                              <ArrowUpRight size={13} />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {detail.lifecycle === 'open' && (
+                        <div className="action-panel">
+                          {detail.attention.some((a) => a.kind === 'failure') && (
+                            <div className="failure-note">
+                              <strong>The last attempt was interrupted.</strong>
+                              <p>No automatic retry was started.</p>
+                              <button
+                                className="secondary"
+                                disabled={busy}
+                                onClick={() => void action('dismiss_failure')}
+                              >
+                                Acknowledge failure
+                              </button>
+                            </div>
+                          )}
+                          {run?.state === 'awaiting_review' ? (
+                            <>
+                              <h3>Review result</h3>
+                              <div className="action-buttons">
+                                <button
+                                  className="primary"
+                                  disabled={busy}
+                                  onClick={() => void action('approve')}
+                                >
+                                  <Check size={16} />
+                                  Approve result &amp; complete
+                                </button>
+                              </div>
+                              <label className="changes-label">
+                                Changes needed
+                                <textarea
+                                  rows={2}
+                                  placeholder="What should change before another attempt?"
+                                  value={changes}
+                                  onChange={(e) => setChanges(e.target.value)}
+                                />
+                              </label>
+                              <button
+                                className="secondary"
+                                disabled={busy || !changes.trim()}
+                                onClick={() => void action('changes')}
+                              >
+                                Request changes
+                              </button>
+                            </>
+                          ) : run ? (
+                            <>
+                              <h3>{run.state === 'queued' ? 'Queued' : 'Running'}</h3>
+                              <p>No execution worker connected</p>
+                              <Badge state={run.state} />
+                            </>
+                          ) : detail.assignment?.state !== 'accepted' ? (
+                            <>
+                              <h3>
+                                {detail.assignment?.state === 'declined'
+                                  ? 'Declined assignment'
+                                  : 'Assignment'}
+                              </h3>
+                              <div className="action-buttons">
+                                <button
+                                  className="primary"
+                                  disabled={busy}
+                                  onClick={() => void action('accept')}
+                                >
+                                  <Check size={16} />
+                                  Accept work
+                                </button>
+                                {detail.assignment?.state === 'proposed' && (
+                                  <button
+                                    className="secondary"
+                                    disabled={busy}
+                                    onClick={() => void action('decline')}
+                                  >
+                                    Decline
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="action-buttons">
+                                <button
+                                  className="primary"
+                                  disabled={busy}
+                                  onClick={() => void action('complete')}
+                                >
+                                  <Check size={16} />
+                                  Mark complete
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {detail.runs.length > 0 && (
+                        <div className="detail-section">
+                          <h3>
+                            Runs <span className="subtle-count">{detail.runs.length}</span>
+                          </h3>
+                          {detail.runs.map((r, i) => (
+                            <details className="run-box" key={r.id} open={i === 0}>
+                              <summary>
+                                <TerminalSquare size={16} />
+                                Attempt · {time(r.createdAt)}
+                                <Badge state={r.state} />
+                              </summary>
+                              {r.summary && <p className="preserve">{r.summary}</p>}
+                              {r.failure && <p className="failure-note">{r.failure}</p>}
+                              {r.artifact && <pre className="artifact">{r.artifact}</pre>}
+                              {!r.summary && !r.failure && (
+                                <p className="fine">Progress appears in the activity below.</p>
+                              )}
+                            </details>
+                          ))}
+                        </div>
+                      )}
+                      <div className="detail-section">
+                        <h3>
+                          <Activity size={16} />
+                          Activity{' '}
+                          {detail.events.length >= 300 && (
+                            <span className="fine">Latest 300 events</span>
+                          )}
+                        </h3>
+                        <form
+                          className="note-form"
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (
+                              await mutate(() =>
+                                api(`/work/${detail.id}/updates`, { message: note }),
+                              )
+                            )
+                              setNote('');
+                          }}
+                        >
+                          <label className="sr-only" htmlFor="note">
+                            Add a note
+                          </label>
+                          <textarea
+                            id="note"
+                            placeholder="Add a note…"
+                            rows={2}
+                            maxLength={8000}
+                            value={note}
+                            onChange={(e) => setNote(e.target.value)}
+                          />
+                          <button className="secondary" disabled={busy || !note.trim()}>
+                            <Plus size={14} />
+                            Add note
+                          </button>
+                        </form>
+                        <ol className="timeline">
+                          {detail.events.map((e) => (
+                            <li key={e.id}>
+                              <span className={`event-dot ${e.type === 'note' ? 'note' : ''}`} />
+                              <div>
+                                <div className="event-byline">
+                                  <strong>{e.actorName}</strong>
+                                  <span>{time(e.createdAt)}</span>
+                                </div>
+                                <p className="preserve">{e.message}</p>
+                                {e.type === 'edited' && (
+                                  <details className="edit-history">
+                                    <summary>Context changes</summary>
+                                    <pre className="artifact">
+                                      {JSON.stringify(e.data, null, 2)}
+                                    </pre>
+                                  </details>
+                                )}
+                                {e.references.map((r, i) => (
+                                  <a
+                                    key={i}
+                                    className="reference"
+                                    href={r.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {r.system}
+                                    <ArrowUpRight size={12} />
+                                  </a>
+                                ))}
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                      {detail.lifecycle === 'open' && (
+                        <div className="detail-footer">
+                          {editable && (
+                            <button
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() => setCompose('edit')}
+                            >
+                              Edit context
+                            </button>
+                          )}
+                          <button
+                            className="text-button danger"
+                            disabled={busy}
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  'Cancel this work and any active attempt? Its history will be kept.',
+                                )
+                              )
+                                void action('cancel');
+                            }}
+                          >
+                            Cancel work
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </section>
+              ) : (
+                <section className="detail-placeholder">
+                  {list.items.length > 0 && <p>Select a work item</p>}
+                </section>
+              )}
+            </div>
+          </>
+        )}
+      </main>
+      <dialog
+        ref={dialog}
+        onCancel={(event) => {
+          event.preventDefault();
+          setCompose(null);
+        }}
+        aria-labelledby="compose-title"
+        className="compose-dialog"
+      >
+        <div className="dialog-heading">
+          <div>
+            <h2 id="compose-title">Edit context</h2>
+          </div>
+          <button className="icon-button" aria-label="Close form" onClick={() => setCompose(null)}>
+            <X size={20} />
+          </button>
+        </div>
+        {compose && (
+          <form key={`${compose}-${detail?.id}`} onSubmit={(e) => void save(e)}>
+            <label>
+              Title
+              <input
+                name="title"
+                required
+                maxLength={180}
+                autoFocus
+                placeholder="What needs doing?"
+                defaultValue={detail?.title}
+              />
+            </label>
+            <label>
+              Objective
+              <textarea
+                name="objective"
+                required
+                maxLength={16000}
+                rows={4}
+                placeholder="Describe the outcome and useful context."
+                defaultValue={detail?.objective}
+              />
+            </label>
+            <label>
+              Acceptance criteria <span className="optional">optional · one per line</span>
+              <textarea
+                name="criteria"
+                rows={3}
+                defaultValue={detail?.acceptanceCriteria.join('\n')}
+              />
+            </label>
+            <div className="form-row">
+              <label>
+                Priority
+                <select name="priority" defaultValue={detail?.priority}>
+                  <option value="low">Low</option>
+                  <option value="normal">Normal</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              Add a reference <span className="optional">optional · HTTP(S)</span>
+              <input name="reference" type="url" maxLength={2000} placeholder="https://…" />
+            </label>
+            {error && (
+              <p role="alert" className="error">
+                {error}
+              </p>
+            )}
+            <div className="dialog-footer">
+              <button className="primary" disabled={busy}>
+                {busy ? 'Saving…' : 'Save changes'}
+                <ArrowUpRight size={16} />
+              </button>
+            </div>
+          </form>
+        )}
+      </dialog>
+    </div>
+  );
+}
+createRoot(document.getElementById('root')!).render(<App />);

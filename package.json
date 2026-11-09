@@ -1,0 +1,53 @@
+{
+  "name": "work-inbox",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "setup": "tsx src/cli/index.ts setup",
+    "mcp:credential": "tsx src/cli/index.ts agent",
+    "credentials": "tsx src/cli/index.ts credentials",
+    "revoke": "tsx src/cli/index.ts revoke",
+    "demo": "tsx src/cli/index.ts demo",
+    "dev": "concurrently -k 'tsx watch src/server/index.ts' 'vite --host 127.0.0.1'",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.server.json && node scripts/copy-migrations.mjs && vite build",
+    "start": "NODE_ENV=production node dist/server/index.js",
+    "desktop:build": "npm run build && node scripts/package-desktop.mjs",
+    "desktop:verify": "node scripts/verify-desktop.mjs",
+    "mcp": "tsx src/mcp/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.5",
+    "@fastify/static": "10.1.10",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.4",
+    "fastify": "5.12.8",
+    "lucide-react": "1.70.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "concurrently": "10.0.6",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "7.3.7",
+    "vitest": "5.1.0"
+  }
+}
