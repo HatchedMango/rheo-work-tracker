@@ -13,6 +13,10 @@ import type {
 import { ensure } from './errors.js';
 import { hash } from './auth.js';
 import { createSchema } from '../shared/contracts.js';
+import { OversightService } from './oversight.js';
+import { StreamService } from './streams.js';
+import { routineCoverage } from './coverage.js';
+import { readTracking } from './stream-data.js';
 const active = ['queued', 'claimed', 'running', 'awaiting_review'];
 export class WorkService {
   constructor(
@@ -86,118 +90,165 @@ export class WorkService {
     return w;
   }
   get(a: Actor, id: string): s.Detail {
+    return this.store.raw
+      .transaction(() => {
+        this.allow(a, ['owner', 'agent']);
+        const w = this.row(a, id);
+        const events = this.db
+          .select({ event: s.events, actorName: s.actors.name })
+          .from(s.events)
+          .innerJoin(s.actors, eq(s.events.actorId, s.actors.id))
+          .where(eq(s.events.workId, id))
+          .orderBy(desc(s.events.createdAt), desc(sql`events.rowid`))
+          .limit(300)
+          .all();
+        return {
+          ...w,
+          tracking: readTracking(this.store, id, this.clock()),
+          sourceName: this.db
+            .select({ name: s.actors.name })
+            .from(s.actors)
+            .where(eq(s.actors.id, w.createdBy))
+            .get()!.name,
+          references: this.db.select().from(s.references).where(eq(s.references.workId, id)).all(),
+          assignment:
+            this.db.select().from(s.assignments).where(eq(s.assignments.workId, id)).get() ?? null,
+          runs: this.db
+            .select()
+            .from(s.runs)
+            .where(eq(s.runs.workId, id))
+            .orderBy(desc(s.runs.createdAt), desc(sql`runs.rowid`))
+            .limit(50)
+            .all()
+            .map((r) => ({ ...r, claimToken: null })),
+          attention: this.db
+            .select()
+            .from(s.attention)
+            .where(and(eq(s.attention.workId, id), isNull(s.attention.resolvedAt)))
+            .all(),
+          events: events.map((x) => ({ ...x.event, actorName: x.actorName })),
+        };
+      })
+      .deferred();
+  }
+  history(a: Actor, id: string, limit = 30, offset = 0) {
     this.allow(a, ['owner', 'agent']);
-    const w = this.row(a, id);
-    const events = this.db
+    this.row(a, id);
+    const rows = this.db
       .select({ event: s.events, actorName: s.actors.name })
       .from(s.events)
       .innerJoin(s.actors, eq(s.events.actorId, s.actors.id))
       .where(eq(s.events.workId, id))
       .orderBy(desc(s.events.createdAt), desc(sql`events.rowid`))
-      .limit(300)
+      .limit(limit)
+      .offset(offset)
       .all();
+    const total = this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(s.events)
+      .where(eq(s.events.workId, id))
+      .get()!.count;
     return {
-      ...w,
-      sourceName: this.db
-        .select({ name: s.actors.name })
-        .from(s.actors)
-        .where(eq(s.actors.id, w.createdBy))
-        .get()!.name,
-      references: this.db.select().from(s.references).where(eq(s.references.workId, id)).all(),
-      assignment:
-        this.db.select().from(s.assignments).where(eq(s.assignments.workId, id)).get() ?? null,
-      runs: this.db
-        .select()
-        .from(s.runs)
-        .where(eq(s.runs.workId, id))
-        .orderBy(desc(s.runs.createdAt), desc(sql`runs.rowid`))
-        .limit(50)
-        .all()
-        .map((r) => ({ ...r, claimToken: null })),
-      attention: this.db
-        .select()
-        .from(s.attention)
-        .where(and(eq(s.attention.workId, id), isNull(s.attention.resolvedAt)))
-        .all(),
-      events: events.map((x) => ({ ...x.event, actorName: x.actorName })),
+      items: rows.map(({ event, actorName }) => ({ ...event, actorName })),
+      total,
+      nextOffset: offset + rows.length < total ? offset + rows.length : null,
     };
   }
   list(a: Actor, f: ListFilter) {
-    this.allow(a, ['owner', 'agent']);
-    ensure(a.ownerId === 'owner', 403, 'Wrong owner.');
-    const clauses = [eq(s.work.workspaceId, 'local')];
-    if (f.q)
-      clauses.push(
-        sql`(instr(lower(${s.work.title}),lower(${f.q}))>0 or instr(lower(${s.work.objective}),lower(${f.q}))>0)`,
-      );
-    if (f.view === 'inbox')
-      clauses.push(
-        sql`exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null)`,
-      );
-    if (f.view === 'active') clauses.push(inArray(s.work.lifecycle, ['open', 'blocked']));
-    if (f.view === 'history') clauses.push(inArray(s.work.lifecycle, ['completed', 'cancelled']));
-    if (f.status !== 'any') {
-      // Derive the current display status before counting/paginating. Only the latest
-      // attempt counts, so an old queued/failed attempt cannot match a newer one.
-      const currentStatus = sql<string>`case when ${s.work.lifecycle} != 'open' then ${s.work.lifecycle} else coalesce(
+    return this.store.raw
+      .transaction(() => {
+        this.allow(a, ['owner', 'agent']);
+        ensure(a.ownerId === 'owner', 403, 'Wrong owner.');
+        const clauses = [eq(s.work.workspaceId, 'local')];
+        if (f.streamId)
+          clauses.push(
+            f.streamId === 'ungrouped'
+              ? sql`exists(select 1 from change_meta where workId=${s.work.id} and streamId is null)`
+              : sql`exists(select 1 from change_meta where workId=${s.work.id} and streamId=${f.streamId})`,
+          );
+        if (f.q)
+          clauses.push(
+            sql`(instr(lower(${s.work.title}),lower(${f.q}))>0 or instr(lower(${s.work.objective}),lower(${f.q}))>0)`,
+          );
+        if (f.view === 'inbox')
+          clauses.push(
+            sql`exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null)`,
+          );
+        if (f.view === 'active')
+          clauses.push(
+            inArray(s.work.lifecycle, ['open', 'blocked']),
+            sql`not exists(select 1 from change_meta where workId=${s.work.id} and deliveredAt is not null)`,
+          );
+        if (f.view === 'history')
+          clauses.push(
+            sql`(${s.work.lifecycle} in ('completed','cancelled') or exists(select 1 from change_meta where workId=${s.work.id} and deliveredAt is not null))`,
+          );
+        if (f.status !== 'any') {
+          // Derive the current display status before counting/paginating. Only the latest
+          // attempt counts, so an old queued/failed attempt cannot match a newer one.
+          const currentStatus = sql<string>`case when ${s.work.lifecycle} != 'open' then ${s.work.lifecycle} when exists(select 1 from change_meta where workId=${s.work.id} and deliveredAt is not null) then 'delivered' else coalesce(
         (select case state when 'claimed' then 'running' when 'running' then 'running' when 'queued' then 'queued' when 'awaiting_review' then 'review' when 'failed' then 'failed' else null end
           from runs where runs.workId=${s.work.id} order by createdAt desc, rowid desc limit 1),
-        (select case state when 'accepted' then 'accepted' when 'declined' then 'declined' else 'backlog' end from assignments where assignments.workId=${s.work.id}), 'backlog') end`;
-      clauses.push(eq(currentStatus, f.status));
-    }
-    if (['completed', 'cancelled'].includes(f.view)) clauses.push(eq(s.work.lifecycle, f.view));
-    if (['queued', 'running', 'review'].includes(f.view)) {
-      const states =
-        f.view === 'running'
-          ? ['claimed', 'running']
-          : f.view === 'review'
-            ? ['awaiting_review']
-            : ['queued'];
-      clauses.push(
-        sql`exists(select 1 from runs where runs.workId=${s.work.id} and runs.state in ${states})`,
-      );
-    }
-    if (f.view === 'backlog')
-      clauses.push(
-        eq(s.work.lifecycle, 'open'),
-        sql`not exists(select 1 from runs where runs.workId=${s.work.id} and runs.state in ('queued','claimed','running','awaiting_review'))`,
-        sql`not exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null)`,
-      );
-    const where = and(...clauses);
-    const total = this.db
-      .select({ count: sql<number>`count(*)` })
-      .from(s.work)
-      .where(where)
-      .get()!.count;
-    const items = this.db
-      .select({ work: s.work, sourceName: s.actors.name })
-      .from(s.work)
-      .innerJoin(s.actors, eq(s.work.createdBy, s.actors.id))
-      .where(where)
-      .orderBy(desc(s.work.updatedAt), s.work.id)
-      .limit(f.limit)
-      .offset(f.offset)
-      .all()
-      .map(({ work: w, sourceName }) => ({
-        ...w,
-        sourceName,
-        assignment:
-          this.db.select().from(s.assignments).where(eq(s.assignments.workId, w.id)).get() ?? null,
-        run:
-          this.db
-            .select()
-            .from(s.runs)
-            .where(eq(s.runs.workId, w.id))
-            .orderBy(desc(s.runs.createdAt), desc(sql`runs.rowid`))
-            .get() ?? null,
-        attention: this.db
-          .select()
-          .from(s.attention)
-          .where(and(eq(s.attention.workId, w.id), isNull(s.attention.resolvedAt)))
-          .all(),
-      }))
-      .map((w) => ({ ...w, run: w.run ? { ...w.run, claimToken: null } : null }));
-    return { items, total };
+        (select case state when 'covered' then 'accepted' when 'accepted' then 'accepted' when 'declined' then 'declined' else 'backlog' end from assignments where assignments.workId=${s.work.id}), 'backlog') end`;
+          clauses.push(eq(currentStatus, f.status));
+        }
+        if (['completed', 'cancelled'].includes(f.view)) clauses.push(eq(s.work.lifecycle, f.view));
+        if (['queued', 'running', 'review'].includes(f.view)) {
+          const states =
+            f.view === 'running'
+              ? ['claimed', 'running']
+              : f.view === 'review'
+                ? ['awaiting_review']
+                : ['queued'];
+          clauses.push(
+            sql`exists(select 1 from runs where runs.workId=${s.work.id} and runs.state in ${states})`,
+          );
+        }
+        if (f.view === 'backlog')
+          clauses.push(
+            eq(s.work.lifecycle, 'open'),
+            sql`not exists(select 1 from runs where runs.workId=${s.work.id} and runs.state in ('queued','claimed','running','awaiting_review'))`,
+            sql`not exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null)`,
+          );
+        const where = and(...clauses);
+        const total = this.db
+          .select({ count: sql<number>`count(*)` })
+          .from(s.work)
+          .where(where)
+          .get()!.count;
+        const items = this.db
+          .select({ work: s.work, sourceName: s.actors.name })
+          .from(s.work)
+          .innerJoin(s.actors, eq(s.work.createdBy, s.actors.id))
+          .where(where)
+          .orderBy(desc(s.work.updatedAt), s.work.id)
+          .limit(f.limit)
+          .offset(f.offset)
+          .all()
+          .map(({ work: w, sourceName }) => ({
+            ...w,
+            tracking: readTracking(this.store, w.id, this.clock()),
+            sourceName,
+            assignment:
+              this.db.select().from(s.assignments).where(eq(s.assignments.workId, w.id)).get() ??
+              null,
+            run:
+              this.db
+                .select()
+                .from(s.runs)
+                .where(eq(s.runs.workId, w.id))
+                .orderBy(desc(s.runs.createdAt), desc(sql`runs.rowid`))
+                .get() ?? null,
+            attention: this.db
+              .select()
+              .from(s.attention)
+              .where(and(eq(s.attention.workId, w.id), isNull(s.attention.resolvedAt)))
+              .all(),
+          }))
+          .map((w) => ({ ...w, run: w.run ? { ...w.run, claimToken: null } : null }));
+        return { items, total };
+      })
+      .deferred();
   }
   create(a: Actor, input: CreateWork) {
     this.allow(a, ['agent']);
@@ -227,6 +278,16 @@ export class WorkService {
         );
         return this.get(a, previous.resourceId);
       }
+      if (input.streamId)
+        ensure(
+          this.store.raw.prepare('SELECT id FROM streams WHERE id=?').get(input.streamId),
+          404,
+          'Stream not found.',
+        );
+      const coverage =
+        input.scopeIntent === 'within_scope'
+          ? routineCoverage(this.store, input.streamId ?? null)
+          : null;
       const id = randomUUID();
       const now = this.clock();
       this.db
@@ -245,6 +306,11 @@ export class WorkService {
           updatedAt: now,
         })
         .run();
+      this.store.raw
+        .prepare(
+          'INSERT INTO change_meta(workId,streamId,expectedOutput,coverageApprovalId) VALUES (?,?,?,?)',
+        )
+        .run(id, input.streamId ?? null, input.expectedOutput ?? '', coverage?.approvalId ?? null);
       for (const ref of input.references)
         this.db
           .insert(s.references)
@@ -252,10 +318,22 @@ export class WorkService {
           .run();
       this.db
         .insert(s.assignments)
-        .values({ id: randomUUID(), workId: id, recipientId: a.ownerId, state: 'proposed' })
+        .values({
+          id: randomUUID(),
+          workId: id,
+          recipientId: a.ownerId,
+          state: coverage ? 'covered' : 'proposed',
+        })
         .run();
-      this.notify(id, 'assignment');
-      this.event(id, a, 'created', 'Created and sent to your inbox.', input.references);
+      if (!coverage) this.notify(id, 'assignment');
+      this.event(
+        id,
+        a,
+        'created',
+        coverage ? 'Tracked within approved stream scope.' : 'Created and sent to your inbox.',
+        input.references,
+        { coverage },
+      );
       if (key) this.db.insert(s.idempotency).values({ key, fingerprint, resourceId: id }).run();
       return this.get(a, id);
     });
@@ -358,7 +436,8 @@ export class WorkService {
         case 'run': {
           ensure(this.allowSimulation, 409, 'No execution worker connected.');
           ensure(
-            assignment.state === 'accepted' && w.ownerId === a.id,
+            ['accepted', 'covered'].includes(assignment.state) &&
+              (w.ownerId === a.id || assignment.recipientId === a.id),
             409,
             'Accept responsibility before approving execution.',
           );
@@ -408,7 +487,8 @@ export class WorkService {
         }
         case 'complete':
           ensure(
-            assignment.state === 'accepted' && w.ownerId === a.id,
+            ['accepted', 'covered'].includes(assignment.state) &&
+              (w.ownerId === a.id || assignment.recipientId === a.id),
             409,
             'Accept the work first.',
           );
@@ -631,11 +711,7 @@ export class WorkService {
       identity: 'You',
       adapter: this.allowSimulation ? 'stub' : null,
       executionAvailable: false,
-      inboxCount: this.db
-        .select({ count: sql<number>`count(distinct ${s.attention.workId})` })
-        .from(s.attention)
-        .where(isNull(s.attention.resolvedAt))
-        .get()!.count,
+      inboxCount: new OversightService(new StreamService(this)).attention(a, 1).total,
       workers: !this.allowSimulation
         ? []
         : this.db

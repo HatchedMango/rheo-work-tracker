@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, chmodSync, existsSync, unlinkSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -38,13 +38,17 @@ export function connectionConfiguration(
   const command =
     client === 'codex'
       ? `codex mcp add ${shellQuote(serverName)} --env ${shellQuote(`WORK_INBOX_CREDENTIAL_FILE=${credentialPath}`)} -- ${[launch.command, ...launch.args].map(shellQuote).join(' ')}`
-      : null;
+      : client === 'claude-code'
+        ? `claude mcp add --env ${shellQuote(`WORK_INBOX_CREDENTIAL_FILE=${credentialPath}`)} --transport stdio --scope local ${shellQuote(serverName)} -- ${[launch.command, ...launch.args].map(shellQuote).join(' ')}`
+        : null;
   const target =
     client === 'codex'
       ? 'Codex'
-      : client === 'claude-desktop'
-        ? 'Claude Desktop'
-        : 'the MCP client I am using';
+      : client === 'claude-code'
+        ? 'Claude Code'
+        : client === 'claude-desktop'
+          ? 'Claude Desktop'
+          : 'the MCP client I am using';
   const setupPrompt = `Set up Work Inbox as a local MCP server in ${target} on this computer.
 
 Use the existing connection named ${serverName}. The Work Inbox app must stay running locally. This is work intake only; it does not enable an execution worker.
@@ -53,7 +57,7 @@ Use the client's supported MCP configuration and preserve all existing servers a
 ${
   command
     ? `
-Supported Codex setup command:
+Supported ${target} setup command:
 ${command}
 `
     : ''
@@ -64,7 +68,18 @@ ${configuration}
 Reload the client's MCP connection if supported. Verify using the connected list_work tool from the client; do not create sample work. A standalone local launcher check does not verify the client connection. If a restart or new chat is required before the tool becomes available, report that the configuration is saved and explain the remaining step. Do not claim the connection is verified until that tool call succeeds.
 
 If you cannot access or update local MCP settings in this environment, say so and give me the exact manual setup steps using the configuration above.`;
+  const workflowHelper = standalone
+    ? join(dirname(entry), 'work-inbox-workflow')
+    : resolve(dirname(entry), '../workflow/index.js');
+  const workflowPrefix = standalone
+    ? shellQuote(workflowHelper)
+    : `${shellQuote(node)} ${shellQuote(workflowHelper)}`;
+  const workflowArgs = `--client ${shellQuote(client === 'claude-code' ? 'claude-code' : 'codex')} --credential-file ${shellQuote(credentialPath)} --helper ${shellQuote(workflowHelper)} --server-name ${shellQuote(serverName)}${standalone ? '' : ` --helper-node ${shellQuote(node)}`}`;
+  const workflowPrompt = ['codex', 'claude-code'].includes(client)
+    ? `Set up the Work Inbox project workflow for ${target} in the current project. Preserve existing files and settings. The MCP server is ${serverName}; do not duplicate or replace its configuration. Keep the credential in its existing protected file and never print its contents.\n\nUse this local helper, replacing PROJECT with the explicit absolute project directory:\n${workflowPrefix} preview --project PROJECT ${workflowArgs}\n\nIf the preview has no conflicts, apply the same command with install instead of preview. Use check to inspect freshness and remove to undo only managed content. Bind a stream or change only if explicitly selected, using --stream-id ID or --change-id ID. Never infer a stream from the project path.\n\n${client === 'claude-code' ? 'This installs a project skill, a managed CLAUDE.md section and a local SessionStart command hook for startup/resume/clear/compaction.' : 'This installs a project skill and a managed AGENTS.md section. It uses explicit context retrieval; automatic lifecycle hooks are not installed.'}\n\nStart a fresh client session and use get_workflow and get_stream_context from ${serverName}. Without a selection, getting stream choices is expected. Verify actual fresh-session delivery separately from MCP connectivity; a helper or launcher check alone does not prove client delivery. Do not create sample work.`
+    : null;
   return {
+    workflowPrompt,
     serverName,
     setupPrompt,
     configuration,
@@ -112,6 +127,19 @@ export class ConnectionService {
     const { credentialPath, idempotencyKey, credentialId, ...c } = row.connection;
     return {
       ...c,
+      workflowRead:
+        (this.store.raw
+          .prepare(
+            'SELECT workflowVersion,project,streamId,lastReadAt FROM workflow_reads WHERE credentialId=?',
+          )
+          .get(credentialId) as
+          | {
+              workflowVersion: string;
+              project: string;
+              streamId: string | null;
+              lastReadAt: number;
+            }
+          | undefined) ?? null,
       client: c.client as ConnectionClient,
       state:
         row.revokedAt !== null

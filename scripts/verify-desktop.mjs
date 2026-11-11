@@ -9,6 +9,7 @@ import {
   cpSync,
   mkdirSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -180,6 +181,77 @@ try {
   assert.equal(statSync(migratedSetup.launch.env.WORK_INBOX_CREDENTIAL_FILE).mode & 0o077, 0);
   await verifyMcp(migratedSetup.launch, [work.id]);
   console.log('PASS: bundled Node/SQLite, migration, protected credentials, and actual stdio MCP.');
+  const streamResponse = await fetch(`${origin}/api/streams`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${originalCredential.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      title: 'Packaged stream',
+      outcome: 'Keep the current outcome across app restarts.',
+      idempotencyKey: 'packaged-stream',
+    }),
+  });
+  assert.equal(streamResponse.status, 201);
+  const fixtureStream = await streamResponse.json();
+  await ownerRequest(`/api/streams/${fixtureStream.id}/actions`, { revision: 1, action: 'accept' });
+  const project = join(temporary, 'Project'),
+    helper = join(desktop, 'bin/work-inbox-workflow');
+  mkdirSync(project);
+  writeFileSync(join(project, 'CLAUDE.md'), '# Existing project instructions\n');
+  const workflowArgs = [
+    '--project',
+    project,
+    '--client',
+    'claude-code',
+    '--credential-file',
+    migratedSetup.launch.env.WORK_INBOX_CREDENTIAL_FILE,
+    '--helper',
+    helper,
+    '--server-name',
+    migratedSetup.serverName,
+    '--stream-id',
+    fixtureStream.id,
+  ];
+  async function workflow(args) {
+    const child = spawn(helper, args, {
+      cwd: tmpdir(),
+      env: { PATH: '/usr/bin:/bin', NODE_OPTIONS: '--invalid-inherited-option' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '',
+      error = '';
+    child.stdout.on('data', (x) => (output += x));
+    child.stderr.on('data', (x) => (error += x));
+    const [code] = await once(child, 'exit');
+    assert.equal(code, 0, error);
+    return output;
+  }
+  const installed = JSON.parse(await workflow(['install', ...workflowArgs]));
+  assert(installed.current);
+  assert(!installed.workflowVerified);
+  const hookSettings = JSON.parse(
+    readFileSync(join(project, '.claude/settings.local.json'), 'utf8'),
+  );
+  assert.equal(hookSettings.hooks.SessionStart.length, 1);
+  const context = await workflow([
+    'context',
+    '--binding',
+    join(project, '.work-inbox/claude-code.json'),
+  ]);
+  assert(context.includes(fixtureStream.outcome));
+  assert(!context.includes(originalCredential.token));
+  assert(JSON.parse(await workflow(['check', ...workflowArgs])).current);
+  await workflow(['remove', ...workflowArgs]);
+  assert.equal(
+    readFileSync(join(project, 'CLAUDE.md'), 'utf8'),
+    '# Existing project instructions\n',
+  );
+  console.log(
+    'PASS: packaged workflow setup/check/context/remove with preserved guidance and no external Node.',
+  );
+
   const duplicate = start(app);
   await once(duplicate, 'exit');
   assert.equal(duplicate.exitCode, 0);
@@ -202,6 +274,10 @@ try {
   native = start(moved);
   await ready(native);
   await verifyMcp(migratedSetup.launch, [work.id]);
+  assert.equal(
+    (await ownerRequest(`/api/streams/${fixtureStream.id}`)).outcome,
+    fixtureStream.outcome,
+  );
   const restartedPid = status().pid;
   const nativeExit = once(native, 'exit');
   native.kill('SIGKILL');

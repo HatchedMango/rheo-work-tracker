@@ -1,3 +1,6 @@
+import { Oversight } from './Oversight.js';
+import { ChangeTrackingView } from './Streams.js';
+import type { Stream } from '../../src/shared/streams.js';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -29,7 +32,7 @@ import './styles.css';
 import { Connections } from './Connections.js';
 import { WorkContent, ActivityContent, ContextChanges, workPreview } from './WorkContent.js';
 const views = ['active', 'history'] as const;
-type View = 'inbox' | 'connections' | (typeof views)[number];
+type View = 'streams' | 'needs' | 'inbox' | 'connections' | (typeof views)[number];
 type StatusFilter = 'any' | WorkStatus;
 class RequestError extends Error {
   constructor(
@@ -83,10 +86,16 @@ async function api<T>(path: string, body?: unknown, method = 'POST'): Promise<T>
   if (!r.ok) throw new RequestError(r.status, result.message || 'Request failed.');
   return result;
 }
-function currentLocation(): { view: View; id: string | null; filter: StatusFilter } {
+function currentLocation(): {
+  view: View;
+  id: string | null;
+  streamId: string | null;
+  filter: StatusFilter;
+} {
   const params = new URLSearchParams(location.search);
-  const raw = params.get('view') || 'inbox';
+  const raw = params.get('view') || (params.has('work') ? 'active' : 'streams');
   const legacy: Record<string, { view: View; filter: StatusFilter }> = {
+    inbox: { view: 'needs', filter: 'any' },
     settings: { view: 'connections', filter: 'any' },
     all: { view: 'active', filter: 'any' },
     backlog: { view: 'active', filter: 'backlog' },
@@ -98,12 +107,14 @@ function currentLocation(): { view: View; id: string | null; filter: StatusFilte
   };
   const view =
     legacy[raw]?.view ||
-    (['inbox', 'connections', ...views].includes(raw) ? (raw as View) : 'inbox');
+    (['streams', 'needs', 'inbox', 'connections', ...views].includes(raw)
+      ? (raw as View)
+      : 'streams');
   const requested = params.get('status') || legacy[raw]?.filter || 'any';
   const allowed: readonly string[] =
     view === 'history' ? historyStatuses : view === 'active' ? activeStatuses : [];
   const filter = allowed.includes(requested) ? (requested as WorkStatus) : 'any';
-  return { view, id: params.get('work'), filter };
+  return { view, id: params.get('work'), streamId: params.get('stream'), filter };
 }
 function time(n: number) {
   return new Date(n).toLocaleString(undefined, {
@@ -127,6 +138,7 @@ function App() {
   const [route, setRoute] = useState(currentLocation);
   const [status, setStatus] = useState<Status | null>(null);
   const [list, setList] = useState<WorkList>({ items: [], total: 0 });
+  const [streams, setStreams] = useState<Stream[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -143,12 +155,14 @@ function App() {
     view: View,
     id: string | null = null,
     filter: StatusFilter = view === route.view ? route.filter : 'any',
+    streamId: string | null = view === route.view ? route.streamId : null,
   ) => {
     const p = new URLSearchParams({ view });
     if (id) p.set('work', id);
+    if (streamId) p.set('stream', streamId);
     if (filter !== 'any') p.set('status', filter);
     history.pushState({}, '', `/?${p}`);
-    setRoute({ view, id, filter });
+    setRoute({ view, id, filter, streamId });
     setError('');
     if (view !== route.view || filter !== route.filter) setOffset(0);
   };
@@ -176,16 +190,22 @@ function App() {
     let cancelled = false;
     async function load() {
       try {
-        const [s, l, d] = await Promise.all([
+        const [s, l, d, streamList] = await Promise.all([
           api<Status>('/status'),
-          route.view === 'connections'
+          ['connections', 'streams', 'needs'].includes(route.view)
             ? Promise.resolve({ items: [], total: 0 })
             : api<WorkList>(
-                `/work?${new URLSearchParams({ view: route.view, status: route.filter, q: search, limit: '40', offset: String(offset) })}`,
+                `/work?${new URLSearchParams({ view: route.view, status: route.filter, q: search, limit: '40', offset: String(offset), ...(route.streamId ? { streamId: route.streamId } : {}) })}`,
               ),
           route.id ? api<Detail>(`/work/${route.id}`) : Promise.resolve(null),
+          ['connections', 'streams', 'needs'].includes(route.view)
+            ? Promise.resolve({ items: [], total: 0 })
+            : api<{ items: Stream[]; total: number }>(
+                `/streams?view=${route.view === 'inbox' ? 'inbox' : route.view === 'history' ? 'history' : 'active'}&q=${encodeURIComponent(search)}&limit=100`,
+              ),
         ]);
         if (!cancelled) {
+          setStreams(streamList.items);
           setStatus(s);
           setList(l);
           setDetail(d);
@@ -207,7 +227,7 @@ function App() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [route.view, route.id, route.filter, search, offset, refresh]);
+  }, [route.view, route.id, route.streamId, route.filter, search, offset, refresh]);
   useEffect(() => {
     setNote('');
     setChanges('');
@@ -276,7 +296,18 @@ function App() {
   }
   const inbox = route.view === 'inbox';
   const settings = route.view === 'connections';
-  const title = inbox ? 'Inbox' : settings ? 'Connections' : 'Work';
+  const title =
+    route.view === 'streams'
+      ? 'Streams'
+      : route.view === 'needs'
+        ? 'Needs you'
+        : inbox
+          ? 'Inbox'
+          : settings
+            ? 'Connections'
+            : 'Changes';
+  const oversightView =
+    (['streams', 'needs'].includes(route.view) || !!route.streamId) && !route.id && !settings;
   const run = detail?.runs.find((r) =>
     ['queued', 'claimed', 'running', 'awaiting_review'].includes(r.state),
   );
@@ -289,7 +320,7 @@ function App() {
           className="brand"
           onClick={(e) => {
             e.preventDefault();
-            navigate('inbox');
+            navigate('streams');
           }}
         >
           <span className="brand-icon">
@@ -298,16 +329,26 @@ function App() {
           Work Inbox
         </a>
         <nav aria-label="Primary">
-          <button className={inbox ? 'selected' : ''} onClick={() => navigate('inbox')}>
-            <Inbox size={18} />
-            Inbox<span className="nav-count">{status?.inboxCount || 0}</span>
+          <button
+            className={route.view === 'streams' ? 'selected' : ''}
+            onClick={() => navigate('streams')}
+          >
+            <Layers3 size={18} />
+            Streams
           </button>
           <button
-            className={!inbox && !settings ? 'selected' : ''}
+            className={route.view === 'needs' ? 'selected' : ''}
+            onClick={() => navigate('needs')}
+          >
+            <Inbox size={18} />
+            Needs you<span className="nav-count">{status?.inboxCount || 0}</span>
+          </button>
+          <button
+            className={!oversightView && !settings ? 'selected' : ''}
             onClick={() => navigate('active')}
           >
             <Layers3 size={18} />
-            Work
+            Changes
           </button>
           <button className={settings ? 'selected' : ''} onClick={() => navigate('connections')}>
             <Plug size={18} />
@@ -319,7 +360,7 @@ function App() {
           <strong>No execution worker connected</strong>
         </div>
       </aside>
-      <main className={`main ${route.id ? 'has-selection' : ''}`}>
+      <main className={`main ${route.id || route.streamId ? 'has-selection' : ''}`}>
         <header className="page-header">
           <h1>{title}</h1>
         </header>
@@ -341,12 +382,23 @@ function App() {
         )}
         {settings ? (
           <Connections request={api} />
+        ) : oversightView ? (
+          <Oversight
+            view={route.view === 'needs' ? 'needs' : 'streams'}
+            streamId={route.streamId}
+            request={api}
+            onStream={(id) => navigate('streams', null, 'any', id)}
+            onWork={(id) => navigate('active', id)}
+            onUngrouped={() => navigate('active')}
+            onRefresh={() => setRefresh((v) => v + 1)}
+          />
         ) : (
           <>
             <div className="toolbar">
               {inbox ? (
                 <span className="list-count">
-                  {list.total} {list.total === 1 ? 'item' : 'items'}
+                  {list.total + streams.length}{' '}
+                  {list.total + streams.length === 1 ? 'item' : 'items'}
                 </span>
               ) : (
                 <div className="work-controls">
@@ -387,7 +439,7 @@ function App() {
                 />
               </label>
             </div>
-            <div className={`workspace ${route.id ? 'with-detail' : ''}`}>
+            <div className={`workspace ${route.id || route.streamId ? 'with-detail' : ''}`}>
               <section className="work-list" aria-label="Work items">
                 {loading && list.items.length === 0 ? (
                   <p className="list-loading" role="status">
@@ -399,7 +451,9 @@ function App() {
                       {search
                         ? 'No matches'
                         : inbox
-                          ? 'Inbox empty'
+                          ? streams.length
+                            ? 'No change decisions'
+                            : 'Inbox empty'
                           : route.filter !== 'any'
                             ? `No ${statusLabels[route.filter].toLowerCase()} work`
                             : route.view === 'history'
@@ -458,6 +512,14 @@ function App() {
                                 : undefined
                             }
                           />
+                          {w.tracking.streamTitle && (
+                            <span className="row-stream" title={w.tracking.streamTitle}>
+                              {w.tracking.streamTitle}
+                            </span>
+                          )}
+                          {w.tracking.progress !== 'unreported' && (
+                            <span className="row-progress">{w.tracking.progress} · reported</span>
+                          )}
                           <span className="source-name" title={w.sourceName}>
                             {w.sourceName}
                           </span>
@@ -550,6 +612,22 @@ function App() {
                       </div>
                       {detail.lifecycle === 'open' && (
                         <div className="action-panel">
+                          {detail.tracking.reviewRequested === 1 && (
+                            <button
+                              className="secondary"
+                              disabled={busy}
+                              onClick={() =>
+                                void mutate(() =>
+                                  api(`/work/${detail.id}/tracking`, {
+                                    revision: detail.tracking.revision,
+                                    reviewRequested: false,
+                                  }),
+                                )
+                              }
+                            >
+                              Reviewed · keep open
+                            </button>
+                          )}
                           {detail.attention.some((a) => a.kind === 'failure') && (
                             <div className="failure-note">
                               <strong>The last attempt was interrupted.</strong>
@@ -599,7 +677,7 @@ function App() {
                               <p>No execution worker connected</p>
                               <Badge state={run.state} />
                             </>
-                          ) : detail.assignment?.state !== 'accepted' ? (
+                          ) : !['accepted', 'covered'].includes(detail.assignment?.state ?? '') ? (
                             <>
                               <div className="action-buttons">
                                 <button
@@ -656,6 +734,11 @@ function App() {
                           </ul>
                         </div>
                       )}
+                      <ChangeTrackingView
+                        work={detail}
+                        onStream={(id) => navigate('active', null, 'any', id)}
+                        onChange={(id) => navigate(route.view, id)}
+                      />
                       {detail.references.length > 0 && (
                         <div className="detail-section">
                           <h3>References</h3>

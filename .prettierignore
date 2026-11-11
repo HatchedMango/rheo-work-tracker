@@ -4,3 +4,8 @@ release
 .data
 test-results
 package-lock.json
+
+# Locally installed workflow artifacts carry installer hashes.
+.work-inbox
+.agents
+AGENTS.md

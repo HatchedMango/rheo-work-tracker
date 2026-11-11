@@ -170,7 +170,15 @@ it('local check launches the actual generated MCP entry without verifying an age
       ctx.connections.get({ id: 'owner', scope: 'owner', ownerId: 'owner' }, setup.id).state,
     ).toBe('detected');
     const tools = await client.listTools();
-    expect(tools.tools.map((t) => t.name)).toHaveLength(4);
+    expect(tools.tools.map((t) => t.name)).toEqual(
+      expect.arrayContaining([
+        'create_work',
+        'list_work',
+        'get_work',
+        'add_work_update',
+        'get_stream_context',
+      ]),
+    );
     // Listing tools alone does not claim that the user has used one.
     expect(
       ctx.connections.get({ id: 'owner', scope: 'owner', ownerId: 'owner' }, setup.id).state,
@@ -291,4 +299,19 @@ it('keeps unverified setups out of connections and revokes credentials when canc
   expect(
     (await ctx.app.inject({ url: `/api/connections/${setup.id}/setup`, headers })).statusCode,
   ).toBe(409);
+});
+
+it('terminates Claude Code variadic environment options before the server name', () => {
+  const config = connectionConfiguration(
+    'claude-code',
+    '4633a26c-test',
+    '/runtime/node',
+    '/app/mcp.js',
+    "/User's files/credential.json",
+  );
+  expect(config.command).toContain(
+    `--env ${shellQuote("WORK_INBOX_CREDENTIAL_FILE=/User's files/credential.json")} --transport stdio --scope local ${shellQuote(config.serverName)} --`,
+  );
+  expect(config.setupPrompt).toContain('Claude Code');
+  expect(config.workflowPrompt).toContain('SessionStart');
 });

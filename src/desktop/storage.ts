@@ -179,5 +179,10 @@ export function installMcpLauncher(root: string, resources: string) {
   writeFileSync(pending, script, { mode: 0o700 });
   chmodSync(pending, 0o700);
   renameSync(pending, launcher);
+  const workflowLauncher = join(root, 'bin', 'work-inbox-workflow');
+  const workflowScript = `#!/bin/sh\nunset NODE_OPTIONS NODE_PATH\nexec ${shellQuote(join(root, 'current/runtime/node'))} ${shellQuote(join(root, 'current/app/dist/workflow/index.js'))} "$@"\n`;
+  writeFileSync(`${workflowLauncher}.${process.pid}`, workflowScript, { mode: 0o700 });
+  chmodSync(`${workflowLauncher}.${process.pid}`, 0o700);
+  renameSync(`${workflowLauncher}.${process.pid}`, workflowLauncher);
   return launcher;
 }

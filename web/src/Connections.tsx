@@ -13,6 +13,7 @@ const stateLabels = {
 };
 const docs = {
   codex: 'https://developers.openai.com/codex/mcp',
+  'claude-code': 'https://code.claude.com/docs/en/mcp',
   'claude-desktop': 'https://modelcontextprotocol.io/docs/develop/connect-local-servers',
   other: 'https://modelcontextprotocol.io/docs/develop/connect-local-servers',
 };
@@ -215,6 +216,11 @@ export function Connections({ request }: { request: Request }) {
                         ? `Client reached Work Inbox ${date(row.initializedAt)}. No tool calls yet.`
                         : `Created ${date(row.createdAt)}`}
                 </p>
+                <p className="fine">
+                  {row.workflowRead
+                    ? `Context retrieved ${date(row.workflowRead.lastReadAt)}${row.workflowRead.project ? ` · ${row.workflowRead.project}` : ''}`
+                    : 'No workflow context retrieved yet.'}
+                </p>
                 <div className="connection-actions">
                   {row.state === 'disconnected' ? (
                     <button className="text-button" onClick={() => begin(row)}>
@@ -344,8 +350,8 @@ export function Connections({ request }: { request: Request }) {
               />
             </label>
             <p className="fine">
-              Can create, read, and add notes to work. Cannot accept assignments or approve
-              execution.
+              Can submit work, maintain agent context, and coordinate claims. Human acceptance and
+              completion stay with you.
             </p>
             {error && (
               <p role="alert" className="error">
@@ -382,14 +388,14 @@ export function Connections({ request }: { request: Request }) {
             </p>
             <details className="manual-config">
               <summary>Manual setup</summary>
-              {setup.client === 'codex' ? (
+              {setup.command ? (
                 <>
                   <p>
                     Run this command in a terminal on this computer, then restart your client’s MCP
                     connection.
                   </p>
                   <div className="config-label">
-                    <strong>Codex setup command</strong>
+                    <strong>{clientLabels[setup.client]} setup command</strong>
                     <button
                       className="text-button"
                       onClick={() => void copy(setup.command!, 'command')}
@@ -402,9 +408,18 @@ export function Connections({ request }: { request: Request }) {
                     {setup.command}
                   </pre>
                   <details className="manual-config">
-                    <summary>TOML configuration</summary>
+                    <summary>
+                      {setup.client === 'codex' ? 'TOML configuration' : 'JSON configuration'}
+                    </summary>
                     <p>
-                      Add this entry to <code>~/.codex/config.toml</code>, keeping existing entries.
+                      {setup.client === 'codex' ? (
+                        <>
+                          Add this entry to <code>~/.codex/config.toml</code>, keeping existing
+                          entries.
+                        </>
+                      ) : (
+                        <>Merge only this server entry into the supported client configuration.</>
+                      )}
                     </p>
                     <button
                       className="text-button"
@@ -441,6 +456,25 @@ export function Connections({ request }: { request: Request }) {
                 </>
               )}
             </details>
+            {setup.workflowPrompt && (
+              <details className="manual-config">
+                <summary>Project workflow</summary>
+                <p>
+                  Give this prompt to your agent to add project guidance
+                  {setup.client === 'claude-code' ? ' and a startup context hook' : ''}. MCP
+                  connectivity alone does not install it.
+                </p>
+                <button
+                  className="text-button"
+                  onClick={() => void copy(setup.workflowPrompt!, 'workflow')}
+                >
+                  {copied === 'workflow' ? 'Copied' : 'Copy workflow prompt'}
+                </button>
+                <pre className="connection-code" tabIndex={0}>
+                  {setup.workflowPrompt}
+                </pre>
+              </details>
+            )}
             <p className="fine">
               Keep Work Inbox running while your agent connects. Credentials stay in a protected
               local file.

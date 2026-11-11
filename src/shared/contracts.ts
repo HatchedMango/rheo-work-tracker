@@ -17,6 +17,9 @@ export const contentSchema = z.object({
 });
 export const createSchema = contentSchema.extend({
   idempotencyKey: z.string().min(1).max(120).optional(),
+  streamId: z.uuid().optional(),
+  scopeIntent: z.enum(['within_scope', 'scope_expansion']).optional(),
+  expectedOutput: z.string().trim().max(3000).optional(),
 });
 export const updateSchema = z.object({
   message: z.string().trim().min(1).max(8000),
@@ -39,6 +42,7 @@ export const listSchema = z.object({
     ])
     .default('all'),
   status: z.enum(['any', ...workStatuses]).default('any'),
+  streamId: z.union([z.uuid(), z.literal('ungrouped')]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).max(1000000).default(0),
 });

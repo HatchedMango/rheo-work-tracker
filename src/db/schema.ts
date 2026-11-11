@@ -158,6 +158,7 @@ export const idempotency = sqliteTable('idempotency', {
 export type Work = typeof work.$inferSelect;
 export type Run = typeof runs.$inferSelect;
 export type Detail = Work & {
+  tracking: import('../shared/streams.js').ChangeTracking;
   sourceName: string;
   references: (typeof references.$inferSelect)[];
   assignment: typeof assignments.$inferSelect | null;
@@ -186,4 +187,217 @@ export const agentConnections = sqliteTable('agent_connections', {
   lastCheckedAt: integer(),
   checkOk: integer({ mode: 'boolean' }),
   completedAt: integer(),
+});
+
+// Stream/change bookkeeping is separate from human work lifecycle and legacy runs.
+export const streams = sqliteTable('streams', {
+  id: text().primaryKey(),
+  workspaceId: text()
+    .notNull()
+    .references(() => workspaces.id),
+  createdBy: text()
+    .notNull()
+    .references(() => actors.id),
+  title: text().notNull(),
+  outcome: text().notNull(),
+  constraints: text().notNull(),
+  context: text().notNull(),
+  state: text().notNull(),
+  revision: integer().notNull(),
+  scopeRevision: integer().notNull(),
+  pendingScope: text({ mode: 'json' }).$type<
+    import('../shared/streams.js').Stream['pendingScope']
+  >(),
+  parentId: text(),
+  approvalId: text(),
+  coverageApprovalId: text(),
+  phase: text().notNull(),
+  progressSummary: text().notNull(),
+  reportedBy: text().references(() => actors.id),
+  reportedAt: integer(),
+  outcomeAvailableAt: integer(),
+  outcomeRevision: integer().notNull(),
+  planRevision: integer().notNull(),
+  assessment: text(),
+  assessedBy: text().references(() => actors.id),
+  assessedAt: integer(),
+  reviewRequested: integer().notNull(),
+  createdAt: integer().notNull(),
+  updatedAt: integer().notNull(),
+});
+export const streamEvents = sqliteTable('stream_events', {
+  id: text().primaryKey(),
+  streamId: text()
+    .notNull()
+    .references(() => streams.id),
+  actorId: text()
+    .notNull()
+    .references(() => actors.id),
+  type: text().notNull(),
+  message: text().notNull(),
+  data: text({ mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: integer().notNull(),
+});
+export const changeMeta = sqliteTable('change_meta', {
+  workId: text()
+    .primaryKey()
+    .references(() => work.id),
+  streamId: text().references(() => streams.id),
+  expectedOutput: text().notNull(),
+  areas: text({ mode: 'json' }).$type<string[]>().notNull(),
+  resources: text({ mode: 'json' }).$type<string[]>().notNull(),
+  baseRef: text().notNull(),
+  progress: text().notNull(),
+  progressNote: text().notNull(),
+  reportedBy: text().references(() => actors.id),
+  reportedAt: integer(),
+  revision: integer().notNull(),
+  planRevision: integer().notNull(),
+  assessment: text(),
+  assessedBy: text().references(() => actors.id),
+  assessedAt: integer(),
+  coverageApprovalId: text(),
+  deliveredAt: integer(),
+  deliveredBy: text().references(() => actors.id),
+  reviewRequested: integer().notNull(),
+});
+export const changeDependencies = sqliteTable('change_dependencies', {
+  changeId: text()
+    .notNull()
+    .references(() => work.id),
+  requiresId: text()
+    .notNull()
+    .references(() => work.id),
+  stage: text().notNull(),
+  condition: text().notNull(),
+  reason: text().notNull(),
+});
+export const streamContext = sqliteTable('stream_context', {
+  id: text().primaryKey(),
+  streamId: text()
+    .notNull()
+    .references(() => streams.id),
+  kind: text().notNull(),
+  body: text().notNull(),
+  state: text().notNull(),
+  needsHuman: integer({ mode: 'boolean' }).notNull(),
+  createdBy: text()
+    .notNull()
+    .references(() => actors.id),
+  answer: text(),
+  answeredBy: text().references(() => actors.id),
+  answeredAt: integer(),
+  revision: integer().notNull(),
+  createdAt: integer().notNull(),
+  updatedAt: integer().notNull(),
+});
+export const changeOutputs = sqliteTable('change_outputs', {
+  id: text().primaryKey(),
+  workId: text()
+    .notNull()
+    .references(() => work.id),
+  kind: text().notNull(),
+  url: text().notNull(),
+  label: text().notNull(),
+  codeRevision: text().notNull(),
+  state: text().notNull(),
+  reportedBy: text()
+    .notNull()
+    .references(() => actors.id),
+  reportedAt: integer().notNull(),
+  revision: integer().notNull(),
+});
+export const collaborationClaims = sqliteTable('collaboration_claims', {
+  id: text().primaryKey(),
+  workId: text()
+    .notNull()
+    .references(() => work.id),
+  actorId: text()
+    .notNull()
+    .references(() => actors.id),
+  credentialId: text()
+    .notNull()
+    .references(() => credentials.id),
+  sessionId: text().notNull(),
+  tokenHash: text().notNull(),
+  planRevision: integer().notNull(),
+  state: text().notNull(),
+  expiresAt: integer().notNull(),
+  createdAt: integer().notNull(),
+  updatedAt: integer().notNull(),
+});
+export const workflowReads = sqliteTable('workflow_reads', {
+  credentialId: text()
+    .primaryKey()
+    .references(() => credentials.id),
+  workflowVersion: text().notNull(),
+  project: text().notNull(),
+  streamId: text().references(() => streams.id),
+  lastReadAt: integer().notNull(),
+});
+
+export const streamApprovals = sqliteTable('stream_approvals', {
+  id: text().primaryKey(),
+  streamId: text()
+    .notNull()
+    .references(() => streams.id),
+  scopeRevision: integer().notNull(),
+  actorId: text()
+    .notNull()
+    .references(() => actors.id),
+  scope: text().notNull(),
+  createdAt: integer().notNull(),
+});
+export const humanActions = sqliteTable('human_actions', {
+  id: text().primaryKey(),
+  streamId: text()
+    .notNull()
+    .references(() => streams.id),
+  createdBy: text()
+    .notNull()
+    .references(() => actors.id),
+  title: text().notNull(),
+  description: text().notNull(),
+  doneWhen: text().notNull(),
+  ownerId: text()
+    .notNull()
+    .references(() => actors.id),
+  waitingOn: text().notNull(),
+  state: text().notNull(),
+  response: text().notNull(),
+  respondedBy: text().references(() => actors.id),
+  revision: integer().notNull(),
+  createdAt: integer().notNull(),
+  updatedAt: integer().notNull(),
+});
+export const oversightNodes = sqliteTable('oversight_nodes', {
+  id: text().primaryKey(),
+  kind: text().notNull(),
+});
+export const flowDependencies = sqliteTable('flow_dependencies', {
+  targetId: text()
+    .notNull()
+    .references(() => oversightNodes.id),
+  sourceId: text()
+    .notNull()
+    .references(() => oversightNodes.id),
+  stage: text().notNull(),
+  condition: text().notNull(),
+  reason: text().notNull(),
+});
+export const streamOutputs = sqliteTable('stream_outputs', {
+  id: text().primaryKey(),
+  streamId: text()
+    .notNull()
+    .references(() => streams.id),
+  kind: text().notNull(),
+  url: text().notNull(),
+  label: text().notNull(),
+  codeRevision: text().notNull(),
+  state: text().notNull(),
+  reportedBy: text()
+    .notNull()
+    .references(() => actors.id),
+  reportedAt: integer().notNull(),
+  revision: integer().notNull(),
 });

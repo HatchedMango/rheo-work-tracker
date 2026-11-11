@@ -4,6 +4,8 @@ A local inbox for work arriving from agents and external workflows. Accept respo
 
 This version supports external capture through MCP, acceptance, context edits, notes, search, and manual completion. **No execution worker is connected yet.** Real agent execution is a future milestone; the app does not offer a run action. The simulation is retained only as an isolated test fixture.
 
+The proposed next phase is documented in the [streams and agent workflows plan](docs/streams-agent-workflow-plan.md): outcome-oriented streams, reviewable changes, durable agent context, and supported client setup. These capabilities are planned, not implemented yet.
+
 ## Start using it
 
 ### Mac desktop app
@@ -73,7 +75,7 @@ Refreshing resumes your unfinished setup. Cancelling or closing a new setup revo
 
 Work Inbox must stay running. The agent launches the stdio MCP companion itself; you do not start a separate MCP daemon manually. App and agent currently run on the same computer.
 
-Each connection gets its own revocable capture/read/note credential. **Setup** reopens its configuration, and **Disconnect** revokes its access immediately. After disconnecting, remove the corresponding server entry from the client to stop launch attempts. Existing client configuration is never edited or replaced by Work Inbox.
+Each connection gets its own revocable agent credential. **Setup** reopens its configuration, and **Disconnect** revokes its access immediately. After disconnecting, remove the corresponding server entry from the client to stop launch attempts. Existing client configuration is never edited or replaced by Work Inbox.
 
 **Having trouble? → Check local setup** launches the actual companion with that credential and checks its tools/API access. This is a local diagnostic, not evidence that your chosen agent is configured. It does not mark the agent verified or create a sample work item. Connection status records successful use, not continuous online presence.
 
@@ -83,10 +85,12 @@ Client setup follows [official OpenAI MCP documentation](https://developers.open
 
 The original `npm run mcp:credential` command remains available for scripted setup. It writes `.data/agent.json`; configure a client to launch the absolute `dist/mcp/index.js` path with the absolute Node executable and `WORK_INBOX_CREDENTIAL_FILE` pointing at that file. CLI-created credentials remain usable but do not appear as managed connections in the guided flow. Use the UI for per-client setup and verification.
 
+The original tools remain available. See [streams and agent workflow](docs/agent-workflow.md) for stream intake, dependencies, outputs, cooperative claims, bounded context, and project setup.
+
 Tools:
 
 - `create_work`: title, objective, optional criteria/priority/references/idempotencyKey. Always submits to Inbox for your decision. Legacy `destination` fields are ignored by the server.
-- `list_work`: optional view, status, q, limit (1–100), and offset. `active` includes open/blocked work; `history` includes completed/cancelled work. `status` filters the current display state before counting/pagination. Legacy views remain supported for existing clients.
+- `list_work`: optional view, status, q, limit (1–100), and offset. `active` includes open/blocked work excluding reported-delivered changes; `history` includes reported delivery and completed/cancelled work. Reported delivery is separate from owner completion. `status` filters the current display state before counting/pagination. Legacy views remain supported for existing clients.
 - `get_work`: work UUID; returns context, up to 50 recent runs, and 300 recent events.
 - `add_work_update`: work UUID, message, and optional references.
 
@@ -101,7 +105,7 @@ Example `create_work` arguments:
 }
 ```
 
-Agent credentials cannot accept assignments, approve execution, claim jobs, review results, or complete work. Notes and task content never become execution authority. To run the source stdio server manually, use `npm run --silent mcp`; do not use a wrapper that writes npm banners to stdout in your MCP client.
+Agent credentials cannot accept assignments, approve execution, claim execution jobs, review results, or complete work. Cooperative change claims are separate bookkeeping and grant no execution authority. Notes and task content never become execution authority. To run the source stdio server manually, use `npm run --silent mcp`; do not use a wrapper that writes npm banners to stdout in your MCP client.
 
 ## Credentials and configuration
 
@@ -156,13 +160,12 @@ Schema migrations run transactionally on setup/startup, are recorded in `schema_
 
 ## Architecture and next steps
 
-See [architecture](docs/architecture.md) and the [approved implementation plan](docs/implementation-plan.md).
+See [architecture](docs/architecture.md), the [first-release implementation history](docs/implementation-plan.md), and the [streams and agent workflows plan](docs/streams-agent-workflow-plan.md).
 
-Next improvements, in order:
+Stream-first oversight, nested streams, human requests, routine scope coverage and scoped project workflow installers are available in 0.3.0; see [usage and verification limits](docs/agent-workflow.md).
 
-1. One real coding-agent adapter with explicit repository allowlisting, isolated execution, bounded operations, and review artifacts.
-2. A smoother worker pairing/startup experience and richer recovery guidance.
-3. Secure reachable hosting for phone access, followed by real team membership/assignment permissions.
-4. Optional GitHub artifacts or one-way external issue linking, once the personal workflow has been used in practice.
+1. Real Codex and Claude Code session pilots, including resume/compaction and parallel handoffs.
+2. Refine the human view and bookkeeping from daily use.
+3. Optional independent MR status integrations and managed hosting after the personal workflow is useful. Execution adapters remain separate future work.
 
 No license has been selected, and no external service or remote repository has been configured.

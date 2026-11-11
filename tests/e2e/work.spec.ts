@@ -5,8 +5,12 @@ import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 async function openWorkspace(page: Page) {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Inbox', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Streams', level: 1 })).toBeVisible();
   await expect(page.getByRole('status')).toHaveCount(0);
+  await page
+    .getByRole('navigation', { name: 'Primary' })
+    .getByRole('button', { name: 'Changes', exact: true })
+    .click();
   await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
   await expect(
     page.getByRole('button', { name: /^(New work|Create work|Capture work)/ }),
@@ -35,7 +39,7 @@ async function receive(page: Page, title: string, objective: string, legacyDesti
   await capture(title, objective, { destination: legacyDestination });
   await page.goto('/?view=inbox');
   const incoming = page
-    .getByRole('region', { name: 'Work items' })
+    .getByRole('region', { name: 'Requests' })
     .getByRole('heading', { name: title, exact: true });
   await expect(incoming).toBeVisible();
   await incoming.click();
@@ -174,7 +178,7 @@ test('legacy backlog submissions reach Inbox; mobile search and human decline st
   await page.getByRole('button', { name: 'Back to list', exact: true }).click();
   await page
     .getByRole('navigation', { name: 'Primary' })
-    .getByRole('button', { name: 'Work', exact: true })
+    .getByRole('button', { name: 'Changes', exact: true })
     .click();
   await page.getByRole('textbox', { name: 'Search work' }).fill('date picker');
   await page
@@ -300,7 +304,7 @@ test('another local website cannot bootstrap owner access or submit work', async
   await openWorkspace(page);
   await page
     .getByRole('navigation', { name: 'Primary' })
-    .getByRole('button', { name: 'Work', exact: true })
+    .getByRole('button', { name: 'Changes', exact: true })
     .click();
   await page.getByRole('textbox', { name: 'Search work' }).fill('Injected from untrusted site');
   await expect(page.getByRole('heading', { name: 'No matches' })).toBeVisible();
@@ -328,7 +332,7 @@ test('Work has Active/History views and a persistent, scoped status filter', asy
   await receive(page, 'Filter fixture: open', 'An unstarted request.');
   await page
     .getByRole('navigation', { name: 'Primary' })
-    .getByRole('button', { name: 'Work', exact: true })
+    .getByRole('button', { name: 'Changes', exact: true })
     .click();
   await page.getByRole('textbox', { name: 'Search work' }).fill('Filter fixture:');
   const list = page.getByRole('region', { name: 'Work items' });
@@ -350,7 +354,7 @@ test('Work has Active/History views and a persistent, scoped status filter', asy
   await expect(status).toHaveValue('backlog');
   await views.getByRole('button', { name: /History/ }).click();
   await expect(status).toHaveValue('any');
-  await expect(status.getByRole('option')).toHaveCount(3);
+  await expect(status.getByRole('option')).toHaveCount(4);
   await page.getByRole('textbox', { name: 'Search work' }).fill('Filter fixture:');
   await status.selectOption('completed');
   await expect(
@@ -540,7 +544,7 @@ test('work presentation prioritizes decisions and safely formats long context', 
     }),
   });
   expect(update.status).toBe(200);
-  await page.goto('/?view=inbox');
+  await page.goto('/?view=active');
   await page.getByRole('textbox', { name: 'Search work' }).fill('Presentation:');
   const list = page.getByRole('region', { name: 'Work items' });
   await expect(list.locator('.work-card')).toHaveCount(2);
@@ -575,4 +579,238 @@ test('work presentation prioritizes decisions and safely formats long context', 
   await expect(detail.getByRole('button', { name: 'Accept work', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/work-presentation-mobile.png', fullPage: true });
+});
+
+test('streams show human intake, reported outputs, dependencies and durable questions', async ({
+  page,
+}) => {
+  await openWorkspace(page);
+  const config = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
+  const post = async (path: string, body: unknown) => {
+    const response = await fetch(`${config.url}/api${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(response.ok).toBe(true);
+    return response.json();
+  };
+  const stream = await post('/streams', {
+    title: 'A durable delivery stream',
+    outcome: 'Agents can resume with the current outcome and decisions.',
+    constraints: 'Keep human acceptance explicit.',
+    context: 'Current focus: the local workflow.',
+    idempotencyKey: randomUUID(),
+  });
+  const first = await capture('Publish the contract', 'A reviewable interface.', {
+    streamId: stream.id,
+    expectedOutput: 'One contract MR',
+  });
+  const next = await capture('Build the consumer', 'Use the published contract.', {
+    streamId: stream.id,
+  });
+  const planned = await post(`/work/${next.id}/tracking`, {
+    revision: 1,
+    dependencies: [
+      {
+        requiresId: first.id,
+        stage: 'start',
+        condition: 'output_available',
+        reason: 'Implement against the published contract.',
+      },
+    ],
+    progress: 'planned',
+  });
+  await post(`/work/${next.id}/tracking`, {
+    revision: planned.tracking.revision,
+    assessmentFingerprint: planned.tracking.assessmentFingerprint,
+    assessDependencies: true,
+  });
+  await post(`/work/${first.id}/outputs`, {
+    kind: 'mr',
+    url: 'https://example.com/mr/42',
+    label: 'Contract MR',
+    codeRevision: 'abc123',
+    state: 'available',
+    idempotencyKey: randomUUID(),
+  });
+  await post(`/streams/${stream.id}/context`, {
+    kind: 'question',
+    body: 'Which repository should publish the contract?',
+    needsHuman: true,
+    idempotencyKey: randomUUID(),
+  });
+  for (let i = 0; i < 31; i++)
+    await post(`/streams/${stream.id}/context`, {
+      kind: 'finding',
+      body: `Routine finding ${i}`,
+      idempotencyKey: randomUUID(),
+    });
+  await page.goto(`/?view=streams&stream=${stream.id}`);
+  const detail = page.getByRole('region', { name: 'Stream detail' });
+  await expect(detail.getByText(stream.outcome, { exact: true })).toBeVisible();
+  const question = detail
+    .locator('.request-card')
+    .filter({ hasText: 'Which repository should publish the contract?' });
+  await expect(question).toBeVisible();
+  await question.getByRole('button', { name: 'Answer', exact: true }).click();
+  await question.getByLabel('Your answer').fill('Use the current repository.');
+  await question.getByRole('button', { name: 'Save answer', exact: true }).click();
+  await expect(question).toHaveCount(0);
+  await detail
+    .getByRole('button', { name: 'Approve direction & routine work', exact: true })
+    .click();
+  await expect(
+    detail.getByRole('button', { name: 'Accept outcome & close', exact: true }),
+  ).toBeVisible();
+  await detail.getByRole('button', { name: /^Direct changes/ }).click();
+  await page.screenshot({ path: 'test-results/stream-desktop.png', fullPage: true });
+  await detail.locator('.change-row').filter({ hasText: 'Build the consumer' }).click();
+  const change = page.getByRole('region', { name: 'Work detail' });
+  await expect(change.getByText('Assessment stale', { exact: true })).toBeVisible();
+  await expect(
+    change.getByText('Before starting: output available · reported satisfied', { exact: true }),
+  ).toBeVisible();
+  await change.getByRole('button', { name: 'Accept work', exact: true }).click();
+  await expect(change.getByRole('button', { name: 'Mark complete', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: 'test-results/change-mobile.png', fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await change.getByRole('button', { name: 'Publish the contract', exact: true }).click();
+  await expect(change.getByRole('link', { name: 'Contract MR' })).toBeVisible();
+  await expect(change.getByText(/available reported by/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('link', { name: 'Contract MR' })).toBeVisible();
+});
+
+test('approved streams stay quiet while a human request shows its unlock and a parallel branch keeps moving', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Streams', level: 1 })).toBeVisible();
+  const config = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
+  const post = async (path: string, body: unknown) => {
+    const r = await fetch(`${config.url}/api${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(r.ok).toBe(true);
+    return r.json();
+  };
+  const root = await post('/streams', {
+    title: 'Ship connected intake',
+    outcome: 'A reliable integration that can be used daily.',
+    idempotencyKey: randomUUID(),
+  });
+  await page.goto(`/?view=streams&stream=${root.id}`);
+  await page.getByRole('button', { name: 'Approve direction & routine work', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  const a = await post('/streams', {
+      title: 'Connect the API',
+      outcome: 'Working API connection',
+      parentId: root.id,
+      scopeIntent: 'within_scope',
+      idempotencyKey: randomUUID(),
+    }),
+    b = await post('/streams', {
+      title: 'Document the workflow',
+      outcome: 'A usable guide',
+      parentId: root.id,
+      scopeIntent: 'within_scope',
+      idempotencyKey: randomUUID(),
+    });
+  const w = await post('/work', {
+      title: 'Implement API bridge',
+      objective: 'Connect with available access',
+      streamId: a.id,
+      scopeIntent: 'within_scope',
+    }),
+    parallel = await post('/work', {
+      title: 'Write the guide',
+      objective: 'Document setup',
+      streamId: b.id,
+      scopeIntent: 'within_scope',
+    });
+  expect(w.assignment.state).toBe('covered');
+  await post(`/work/${parallel.id}/tracking`, { revision: 1, progress: 'working' });
+  const h = await post('/human-actions', {
+    streamId: root.id,
+    title: 'Get API access from Bob',
+    doneWhen: 'Access is available in the local credential store',
+    waitingOn: 'Bob',
+    idempotencyKey: randomUUID(),
+  });
+  await post('/dependencies', {
+    target: { id: w.id, kind: 'change' },
+    revision: 1,
+    dependencies: [
+      {
+        source: { id: h.id, kind: 'human_action' },
+        stage: 'start',
+        condition: 'done',
+        reason: 'Cannot connect without access',
+      },
+    ],
+  });
+  await page.goto('/');
+  const card = page.locator('.outcome-card').filter({ hasText: root.title });
+  await expect(card).toContainText('1 change moving');
+  await expect(card).toContainText('1 changes · 0 streams waiting');
+  await page
+    .getByRole('navigation', { name: 'Primary' })
+    .getByRole('button', { name: /Needs you/ })
+    .click();
+  const request = page.locator('.request-card').filter({ hasText: h.title });
+  await expect(request).toHaveCount(1);
+  await expect(request).toContainText('Implement API bridge');
+  await expect(request).toContainText(root.title);
+  await expect(request).toContainText(a.title);
+  await expect(page.locator('.request-card').filter({ hasText: parallel.title })).toHaveCount(0);
+  await request.getByRole('button', { name: 'Respond', exact: true }).click();
+  await request
+    .getByLabel('Response', { exact: true })
+    .fill('Bob enabled access in the existing local store.');
+  await request.getByRole('button', { name: 'Mark done', exact: true }).click();
+  await expect(request).toHaveCount(0);
+  const detail = await fetch(`${config.url}/api/work/${w.id}`, {
+    headers: { Authorization: `Bearer ${config.token}` },
+  }).then((r) => r.json());
+  expect(detail.tracking.prerequisites[0].satisfied).toBe(true);
+  await post(`/work/${w.id}/tracking`, {
+    revision: detail.tracking.revision,
+    progress: 'delivered',
+  });
+  await page.goto(`/?view=streams&stream=${root.id}`);
+  const region = page.getByRole('region', { name: 'Stream detail' });
+  await expect(region.getByRole('heading', { name: a.title, exact: true })).toHaveCount(0);
+  await expect(region.getByRole('button', { name: new RegExp(a.title) })).toBeVisible();
+  await expect(
+    region.getByRole('button', { name: 'Accept outcome & close', exact: true }),
+  ).toBeVisible();
+  await expect(region.getByText(w.title, { exact: true })).toHaveCount(0);
+  await region.getByRole('button', { name: new RegExp(a.title) }).click();
+  await expect(page.getByRole('heading', { name: a.title, exact: true })).toBeVisible();
+  await page
+    .getByRole('button', { name: /^Direct changes/ })
+    .last()
+    .click();
+  await page.getByRole('button', { name: new RegExp(w.title) }).click();
+  await expect(
+    page
+      .getByRole('region', { name: 'Work detail' })
+      .getByText('delivered', { exact: true })
+      .first(),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/?view=streams&stream=${root.id}`);
+  await expect(page.getByRole('heading', { name: root.title, exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/oversight-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  await expect(page.locator('.outcome-card').filter({ hasText: root.title })).toContainText(
+    '1 of 2 changes delivered',
+  );
+  await page.screenshot({ path: 'test-results/oversight-desktop.png', fullPage: true });
 });

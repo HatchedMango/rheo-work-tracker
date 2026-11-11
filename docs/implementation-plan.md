@@ -2,6 +2,8 @@
 
 Status: approved and implemented on November 6, 2026. Local browser access was subsequently revised at the user’s request to open directly without sign-in. See `docs/verification.md` for results and known limits.
 
+This is the historical first-release plan. The proposed next phase is [streams and agent workflows](streams-agent-workflow-plan.md).
+
 ## Product revision: external intake only
 
 The user subsequently established that work always originates externally. Manual UI creation is removed, browser sessions cannot create work through the API, and the supported intake path is MCP/authenticated source clients. Existing context can still be clarified in the UI. Historical manual-capture steps below are superseded by this requirement; demos import labeled examples through a distinct source actor.
@@ -12,7 +14,7 @@ The user subsequently removed simulation from the normal experience. It is retai
 
 ## Product revision: server-enforced inbox intake
 
-Every new external submission must enter Inbox for the user's decision. Agents cannot select a destination or bypass review. The shared service creates assignment attention transactionally, and legacy destination fields are ignored. Historical backlog-by-default intake requirements below are superseded. Previously bypassed undecided work is recovered by a versioned migration; resolved decisions and closed work are preserved.
+Historical policy: every external submission entered Inbox. Version 0.3.0 supersedes this with explicit owner-approved stream coverage for routine in-scope work; new direction, unknown coverage and scope expansion still require decisions. Agents cannot grant approval. The shared service creates assignment attention transactionally, and legacy destination fields are ignored. Historical backlog-by-default intake requirements below are superseded. Previously bypassed undecided work is recovered by a versioned migration; resolved decisions and closed work are preserved.
 
 ## Goal
 

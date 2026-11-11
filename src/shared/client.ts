@@ -20,16 +20,20 @@ export class ApiError extends Error {
     super(message);
   }
 }
-export function apiClient(config: z.infer<typeof credentialSchema>) {
+export function apiClient(
+  config: z.infer<typeof credentialSchema>,
+  options: { timeoutMs?: number; diagnostic?: boolean } = {},
+) {
   return async function request<T>(path: string, body?: unknown): Promise<T> {
     const response = await fetch(new URL(path, config.url), {
       method: body === undefined ? 'GET' : 'POST',
       headers: {
         Authorization: `Bearer ${config.token}`,
+        ...(options.diagnostic ? { 'X-Work-Inbox-Diagnostic': '1' } : {}),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(options.timeoutMs ?? 10000),
       redirect: 'error',
     });
     const data = (await response.json()) as { message?: string };

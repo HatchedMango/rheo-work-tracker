@@ -1,0 +1,74 @@
+# Streams and agent workflow
+
+Version 0.3.0 adds stream-first oversight and workflow 1.2.0. Existing work IDs and tools remain valid. Migration preserves old decisions and policies; it creates no stream approvals or sample work.
+
+A **stream** is a sustained outcome that can contain feeding streams. A **change** is a bounded output with optional stream membership. Composition is separate from prerequisites: a child can proceed independently unless an explicit gate says otherwise. Completing changes never closes a stream.
+
+## Human view
+
+**Streams** is the landing view. Outcome, attributed progress and inventory show what is moving and which portions are waiting. Open a stream for human requests, feeding streams, outputs, collapsed direct changes and history. **Needs you** collects human actions, unanswered questions, direction/scope decisions and explicitly requested reviews. One request appears once, with direct unlocks and affected streams.
+
+Approving a new direction includes routine decomposition within its scope. Agents must explicitly declare `scopeIntent: within_scope`; the server derives coverage from a current owner approval. Unknown coverage, omitted declarations, new top-level direction and `scope_expansion` still need a decision. Coverage retains the immutable approval ID/scope revision and is distinct from individual acceptance. Existing streams require **Enable routine work coverage** for future additions; existing proposals stay undecided until explicitly covered or individually accepted. **Cover visible proposals** enumerates the visible proposals in the current page; it does not silently accept unseen work.
+
+Human requests record a completion condition, waiting-on party, response and provenance. Only the owner can mark an action done; cancellation does not satisfy a done prerequisite. Questions save the owner's answer atomically with resolution. Keep credential values in protected local storage, not work content.
+
+Agents report routine changes `delivered`; those leave Active and appear in History while human lifecycle stays open. An explicit `reviewRequested` surfaces a review. The owner can review and keep work open, or explicitly accept an outcome. A parent never closes automatically. This app does not dispatch agents or enable an execution worker.
+
+## MCP protocol
+
+Use `get_workflow` for the maintained instructions. The server also supplies startup instructions through MCP. These support client setup; they do not guarantee that a model will follow them.
+
+| Tool                                                     | Purpose                                                                                                                     |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `submit_stream`                                          | Submit title/outcome/constraints/context with an idempotency key for human intake                                           |
+| `list_streams`, `get_stream`                             | Discover streams; read full scope or bounded context/history pages                                                          |
+| `create_work`                                            | Submit a change; optional `streamId`, `expectedOutput`, and explicit `scopeIntent` for coverage                             |
+| `list_work`, `get_work`, `add_work_update`               | Original tools; listing also accepts `streamId` or `ungrouped`                                                              |
+| `update_stream`                                          | Update concise current context or propose scope, using the stream revision                                                  |
+| `update_change`                                          | Maintain tracking, dependency assessment, areas/resources/base, and reported progress using the metadata revision           |
+| `record_context`, `get_context_entry`, `resolve_context` | Persist decisions/findings/questions/constraints; agents resolve only their own entries                                     |
+| `record_output`                                          | Report an MR/document/finding/release link, artifact revision, and available/integrated state                               |
+| `claim_change`, `update_claim`                           | Cooperatively claim a caller-selected accepted or currently covered change; renew/release the same credential/session lease |
+| `get_stream_context`                                     | Bounded current summaries for an explicit stream/change; without selection, returns choices                                 |
+
+Never infer a stream from a repository path. A project binding supplies explicit IDs. If several streams could apply, ask. Open human actions and human-directed questions precede routine entries in their context collections. Context packages cap their serialized payload at 48 KB including JSON escapes, mark summaries and include dependency/output counts, and provide independent `entries`, `changes`, `humanActions` and `children` nextOffset cursors. Pass those back as `entryOffset`, `changeOffset`, `actionOffset` and `childOffset`; a finished collection can use its total as its offset. `get_stream`, `get_context_entry`, and `get_work` retrieve full records on demand. `get_work` also accepts `part: events` or `part: outputs` for pages beyond the default detail limits.
+
+Tracking revisions are separate from human work revisions. Notes/progress do not invalidate prerequisite assessments. Relevant scope, plan, dependency, or upstream output changes do. An assessment is **unknown**, **current**, or **stale**; assessed independence is different from missing assessment. A current agent assessment is not an application guarantee of conflict-free execution. Save plan changes before assessing. Read the updated change/context, then submit its `tracking.assessmentFingerprint` as `assessmentFingerprint`, alongside `assessDependencies: true` and the metadata revision. If scope, prerequisites, or output evidence changed since that read, the server rejects the assessment. Plan edits and assessment cannot be combined in one write; the plan-update response includes current context for the follow-up assessment. Reordering the same dependency set does not change the plan.
+
+The legacy change-only dependency format records `requiresId`, `stage` (`start` or `integrate`), `condition` (`output_available` or `integrated`), and a reason. Relationships can cross streams. Validation considers start → output → integration stages, rejecting impossible cycles while allowing implementation against an available output before integration. Satisfaction is based on attributed reports; independent SCM observation is not implemented.
+
+`set_prerequisites` replaces typed dependencies with `{target:{id,kind}, revision, dependencies:[{source:{id,kind},stage,condition,reason}]}`. Targets are streams or changes; sources may also be human actions. Stages are `start` or `deliver`. Conditions are change output available/integrated, stream outcome available/accepted, or human action done. Combined stage cycles and containment cycles are rejected independently. Legacy `update_change.dependencies` replaces only change-sourced edges, preserving human/stream gates.
+
+`request_human_action`, `get_human_action` and `withdraw_human_action` maintain requests; agents may withdraw only their own open request with an explanation. `report_stream` records phase/summary/outcome availability or requests review, using `streamRevision`. `move_stream` permits reorganization within the same approval boundary, with owner-only cross-boundary moves. `record_stream_output` records stream-level evidence. `get_stream` supports paged `overview`, `human-actions` and `outputs` parts as well as the original parts. Human response, coverage and lifecycle endpoints are not MCP owner tools.
+
+Output creation/revisions use idempotency keys. Revising an existing report for the same source/link also requires its current output `revision`. Reports from different sources remain distinct. Stale metadata/output/scope writes return a conflict and current revision; reload and reconcile.
+
+Claims require an explicit UUID `sessionId`, a caller-generated private `token` (32–120 URL-safe characters), the current metadata revision, and an accepted or effectively covered open change that is not reported delivered (with an active ancestor chain). The default lease is ten minutes, bounded to 1–30 minutes. An immediate SQLite transaction and unique index give one winner per change; exact exclusive-resource names also conflict. File/area overlap is informational. Generate and retain that random token before sending the request. If its response is lost, replay with the same credential/session/token to recover the same claim and expiry, even if routine metadata has since changed. A replay never extends the lease, restarts a released/expired attempt, or gives another credential/session access. Use a new token for an explicit new attempt. Keep the claim token private; it is stored hashed, omitted from lists/details, and only that credential/session can renew/release it. Expiry, revocation, or a human closing the work never starts, retries, fails, or completes execution. Claims cannot stop nonparticipating agents.
+
+## Project setup
+
+In **Connections → Setup → Project workflow**, copy the workflow prompt to your agent after configuring MCP. It gives exact helper/credential paths without exposing credential contents. The helper supports `preview`, `install`, `check`, and `remove`. All require an explicit project and client. A selection is optional; use `--stream-id ID` or `--change-id ID` only when explicitly chosen.
+
+Desktop installs provide `~/Library/Application Support/Work Inbox/bin/work-inbox-workflow`, backed by the bundled Node runtime. No project Node installation is required. For source development, use `node dist/workflow/index.js` and pass `--helper-node /absolute/path/to/node` as well as `--helper /absolute/path/to/dist/workflow/index.js`.
+
+Setup owns a marked instruction section, skill files, a local binding manifest, and (Claude Code only) one startup hook. It preserves unrelated project instructions, servers, permissions, and hooks. Edited managed content produces a conflict instead of being overwritten. Remove restores only managed content; it preserves unrelated edits. The local `.work-inbox/` manifests contain machine paths and selection, never credential bytes; keep that directory out of shared repository commits.
+
+| Client                     | Installed workflow                                                                                                                                                      |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex                      | `.agents/skills/work-inbox/SKILL.md`, managed `AGENTS.md` block, local binding; explicit context refresh at startup/resume/compaction                                   |
+| Claude Code                | `.claude/skills/work-inbox/SKILL.md`, managed `CLAUDE.md` block, local binding, one command hook in `.claude/settings.local.json` for startup/resume/clear/compact/fork |
+| Claude Desktop / other MCP | Existing connection setup, MCP server instructions, and retrievable workflow/context; no unsupported hook promise                                                       |
+
+Codex setup also generates an optional skills-only plugin under `.work-inbox/codex-plugin/`, with portable and compatibility manifests and an onboarding skill. It reuses the existing MCP connection; it does not register another server. This bundle is not automatically enabled or published to a marketplace. The project guidance/skill fallback works without plugin installation. Automatic Codex lifecycle hooks are not installed in this release.
+
+Claude Code startup uses the local helper because MCP is not available to initial SessionStart hooks. The helper makes a bounded, read-only API request with a 2.5-second timeout and emits context or an explicit unavailable/stale message. It does not read transcripts, launch work, or infer completion. An unavailable app is never reported as an empty successful context load.
+
+Setup follows [Codex skills](https://learn.chatgpt.com/docs/build-skills), [OpenAI plugin packaging](https://developers.openai.com/plugins/build/plugins), [Claude Code skills](https://code.claude.com/docs/en/skills), and [Claude Code hook documentation](https://code.claude.com/docs/en/hooks), checked November 11, 2026. Capability and loading behavior still need live-client pilots; installed files alone are not proof of delivery.
+
+## Verification and limits
+
+Connection tool activity, installed/current guidance, configured hooks, and last observed context retrieval are separate evidence. Connections shows the last context retrieval when one was observed. Local setup diagnostics suppress MCP connection telemetry and context-read telemetry. A helper/API request proves retrieval, not delivery to a model; a successful SDK client is not proof that the user's Codex or Claude Code session loaded guidance.
+
+Automated checks cover existing-data migration/idempotency, authority, stage cycles, stale writes/assessments, claim exclusivity/expiry/revocation, bounded pagination, safe project setup/removal, HTTP/MCP, browser/mobile flows, and packaged helper/runtime behavior. The stdio pilot saves a decision/question/output/progress/claim, disconnects, then retrieves them from a new SDK client session.
+
+The real local Codex pilot now records project guidance/skill loading, connected workflow/context retrieval, accepted-work claims and releases, pinned dependency assessments, durable findings, and recovery in a second fresh chat without prior chat history. The reconnected development chat also retrieved that saved evidence through the new tools. The pilot exposed ambiguity between work and tracking revisions and between change and claim IDs. Remaining release evidence: actual Codex compaction recovery and real Claude Code startup/resume/compaction. No public marketplace, independent MR synchronization, automatic execution, multi-user hosting, or notarized distribution is included.

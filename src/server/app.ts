@@ -1,3 +1,7 @@
+import { OversightService } from '../services/oversight.js';
+import * as oversightContracts from '../shared/oversight.js';
+import { StreamService } from '../services/streams.js';
+import * as streamContracts from '../shared/streams.js';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import serveStatic from '@fastify/static';
@@ -42,6 +46,8 @@ export async function createApp(
   });
   const auth = new Auth(store, options.clock);
   const service = new WorkService(store, options.clock, options.allowSimulation);
+  const streams = new StreamService(service);
+  const oversight = new OversightService(streams);
   const connections = new ConnectionService(store, {
     origin: options.origin,
     directory:
@@ -200,6 +206,181 @@ export async function createApp(
     const body = updateSchema.parse(req.body);
     return service.note(actor, idOf(req.params), body.message, body.references);
   });
+  app.get('/api/work/:id/events', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return service.history(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.get('/api/work/:id/outputs', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return streams.outputs(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.get('/api/streams', async (req) =>
+    streams.list(authenticate(req), streamContracts.streamListSchema.parse(req.query)),
+  );
+  app.post('/api/streams', async (req, reply) => {
+    const item = streams.submit(
+      writeActor(req),
+      streamContracts.submitStreamSchema.parse(req.body),
+    );
+    reply.code(201);
+    return item;
+  });
+  app.get('/api/streams/:id', async (req) => streams.get(authenticate(req), idOf(req.params)));
+  app.post('/api/streams/:id/update', async (req) =>
+    streams.update(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.streamUpdateSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/streams/:id/actions', async (req) =>
+    streams.action(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.streamActionSchema.parse(req.body),
+    ),
+  );
+  const pageSchema = z.object({
+    limit: z.coerce.number().int().min(1).max(30).default(30),
+    offset: z.coerce.number().int().min(0).max(100000).default(0),
+  });
+  app.get('/api/oversight/streams', async (req) => {
+    const p = pageSchema
+      .extend({ view: z.enum(['active', 'history', 'all']).default('active') })
+      .parse(req.query);
+    return oversight.overview(authenticate(req), p.view, p.limit, p.offset);
+  });
+  app.get('/api/attention', async (req) => {
+    const p = pageSchema.extend({ streamId: z.uuid().optional() }).parse(req.query);
+    return oversight.attention(authenticate(req), p.limit, p.offset, p.streamId);
+  });
+  app.get('/api/streams/:id/overview', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return oversight.detail(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.post('/api/dependencies', async (req) =>
+    oversight.dependencies(
+      writeActor(req),
+      oversightContracts.setDependenciesSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/human-actions', async (req) =>
+    oversight.createAction(writeActor(req), oversightContracts.humanActionSchema.parse(req.body)),
+  );
+  app.get('/api/human-actions/:id', async (req) =>
+    oversight.action(authenticate(req), idOf(req.params)),
+  );
+  app.post('/api/human-actions/:id/respond', async (req) =>
+    oversight.respond(
+      writeActor(req),
+      idOf(req.params),
+      oversightContracts.humanResponseSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/context/:id/answer', async (req) =>
+    oversight.answer(
+      writeActor(req),
+      idOf(req.params),
+      oversightContracts.answerSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/streams/:id/report', async (req) =>
+    oversight.report(
+      writeActor(req),
+      idOf(req.params),
+      oversightContracts.streamReportSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/streams/:id/move', async (req) =>
+    oversight.move(
+      writeActor(req),
+      idOf(req.params),
+      oversightContracts.moveStreamSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/streams/:id/coverage', async (req) =>
+    oversight.cover(
+      writeActor(req),
+      idOf(req.params),
+      oversightContracts.coverageSchema.parse(req.body),
+    ),
+  );
+  app.get('/api/streams/:id/outputs', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return oversight.outputs(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.get('/api/streams/:id/human-actions', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return oversight.actions(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.post('/api/streams/:id/outputs', async (req) =>
+    oversight.output(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.outputSchema.parse(req.body),
+    ),
+  );
+  app.get('/api/streams/:id/context', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return streams.contextEntries(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.get('/api/streams/:id/events', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return streams.events(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.post('/api/streams/:id/context', async (req) =>
+    streams.recordContext(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.contextEntrySchema.parse(req.body),
+    ),
+  );
+  app.get('/api/context/:id', async (req) => streams.entry(authenticate(req), idOf(req.params)));
+  app.post('/api/context/:id/resolve', async (req) =>
+    streams.resolveContext(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.resolveContextSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/work/:id/tracking', async (req) =>
+    streams.updateChange(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.changeUpdateSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/work/:id/outputs', async (req) =>
+    streams.recordOutput(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.outputSchema.parse(req.body),
+    ),
+  );
+  app.post('/api/work/:id/claims', async (req) =>
+    streams.claim(writeActor(req), idOf(req.params), streamContracts.claimSchema.parse(req.body)),
+  );
+  app.post('/api/claims/:id', async (req) =>
+    streams.renew(
+      writeActor(req),
+      idOf(req.params),
+      streamContracts.renewClaimSchema.parse(req.body),
+    ),
+  );
+  app.get('/api/workflow', async (req) => {
+    streams.allow(authenticate(req));
+    return {
+      version: streamContracts.WORKFLOW_VERSION,
+      instructions: streamContracts.workflowInstructions,
+    };
+  });
+  app.get('/api/context', async (req) =>
+    streams.context(
+      authenticate(req),
+      streamContracts.streamContextSchema.parse(req.query),
+      req.headers['x-work-inbox-diagnostic'] === '1',
+    ),
+  );
   app.post('/api/worker/claim', async (req) => {
     const a = writeActor(req);
     z.object({}).strict().parse(req.body);
@@ -215,5 +396,5 @@ export async function createApp(
   });
   if (options.publicDir && existsSync(options.publicDir))
     await app.register(serveStatic, { root: options.publicDir });
-  return { app, auth, service, connections };
+  return { app, auth, service, connections, streams, oversight };
 }
