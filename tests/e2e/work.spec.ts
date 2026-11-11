@@ -12,7 +12,7 @@ async function openWorkspace(page: Page) {
     page.getByRole('button', { name: /^(New work|Create work|Capture work)/ }),
   ).toHaveCount(0);
 }
-async function receive(page: Page, title: string, objective: string, legacyDestination?: string) {
+async function capture(title: string, objective: string, extra: Record<string, unknown> = {}) {
   const config = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
   // Intake happens outside the UI, through the same scoped HTTP interface used by MCP.
   const response = await fetch(`${config.url}/api/work`, {
@@ -21,14 +21,18 @@ async function receive(page: Page, title: string, objective: string, legacyDesti
     body: JSON.stringify({
       title,
       objective,
-      destination: legacyDestination,
       acceptanceCriteria: ['Preserve the context.'],
       idempotencyKey: randomUUID(),
+      ...extra,
     }),
   });
   expect(response.status).toBe(201);
   const item = await response.json();
   expect(item.attention.map((a: { kind: string }) => a.kind)).toEqual(['assignment']);
+  return item;
+}
+async function receive(page: Page, title: string, objective: string, legacyDestination?: string) {
+  await capture(title, objective, { destination: legacyDestination });
   await page.goto('/?view=inbox');
   const incoming = page
     .getByRole('region', { name: 'Work items' })
@@ -79,7 +83,9 @@ test('externally submitted work, context edits, notes, and manual completion', a
     .fill('Updated objective with durable context.');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(
-    page.getByText('Updated objective with durable context.', { exact: true }).last(),
+    page
+      .getByRole('region', { name: 'Details', exact: true })
+      .getByText('Updated objective with durable context.', { exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Accept work', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Run simulation' })).toHaveCount(0);
@@ -96,6 +102,10 @@ test('externally submitted work, context edits, notes, and manual completion', a
   ).toBeVisible();
   await page.getByRole('button', { name: 'Mark complete', exact: true }).click();
   await expect(page.locator('.detail-meta .badge')).toHaveText('completed');
+  await page.getByText('Context changes', { exact: true }).click();
+  await expect(page.locator('.context-changes').getByText('Before', { exact: true })).toBeVisible();
+  await expect(page.locator('.context-changes').getByText('After', { exact: true })).toBeVisible();
+  await expect(page.locator('.context-changes pre')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 test('queued work waits offline, actual worker posts a result, and review requires a decision', async ({
@@ -213,6 +223,7 @@ test('a failed context edit preserves input and can be retried', async ({ page }
   await expect(
     page
       .getByRole('region', { name: 'Work detail' })
+      .getByRole('region', { name: 'Details', exact: true })
       .getByText('This context must survive a failed edit.', { exact: true }),
   ).toBeVisible();
 });
@@ -468,4 +479,100 @@ test('unfinished setup resumes on refresh, stays out of connections, and cancell
   expect(rows.items.some((r: { id: string }) => r.id === setup.id)).toBe(false);
   const stale = await page.request.get(`/api/connections/${setup.id}/setup`);
   expect(stale.status()).toBe(409);
+});
+
+test('work presentation prioritizes decisions and safely formats long context', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openWorkspace(page);
+  const imageRequests: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes('untrusted-image.example')) imageRequests.push(request.url());
+  });
+  const item = await capture(
+    'Presentation: Make setup easier',
+    [
+      'Make the **first connection** easy to understand.',
+      '',
+      '### Context',
+      '',
+      'Keep the existing server and improve the setup flow.',
+      '',
+      '- Preserve existing connections.',
+      '- Show one clear next step.',
+      '',
+      'Use `list_work` to confirm the connection.',
+      '',
+      '```sh',
+      'work-inbox-mcp',
+      '```',
+      '',
+      '| Check | Expected |',
+      '| --- | --- |',
+      '| Existing work | Preserved |',
+      '',
+      '[Documentation](https://example.com/guide)',
+      '',
+      '[Unsafe link](javascript:alert(1))',
+      '',
+      '![Remote image](https://untrusted-image.example/pixel.png)',
+    ].join('\n'),
+    {
+      acceptanceCriteria: [
+        'The **existing connection** continues working.',
+        'The setup instructions include `list_work`.',
+      ],
+      priority: 'high',
+    },
+  );
+  await capture(
+    'Presentation: Preserve work when offline',
+    'Retain new work while the laptop is asleep.',
+  );
+  const credential = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
+  const update = await fetch(`${credential.url}/api/work/${item.id}/updates`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${credential.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message:
+        'Implementation context. '.repeat(35) + '\n\n**Final decision:** Keep the current server.',
+    }),
+  });
+  expect(update.status).toBe(200);
+  await page.goto('/?view=inbox');
+  await page.getByRole('textbox', { name: 'Search work' }).fill('Presentation:');
+  const list = page.getByRole('region', { name: 'Work items' });
+  await expect(list.locator('.work-card')).toHaveCount(2);
+  await expect(list.getByText('External capture agent', { exact: true })).toHaveCount(2);
+  await expect(list.getByText('Needs decision', { exact: true })).toHaveCount(2);
+  await expect(page.getByText('Select a work item', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/work-presentation-list.png', fullPage: true });
+  await list.getByRole('heading', { name: 'Presentation: Make setup easier', exact: true }).click();
+  const detail = page.getByRole('region', { name: 'Work detail' });
+  await expect(detail.getByRole('heading', { name: 'Context', level: 4 })).toBeVisible();
+  await expect(detail.locator('strong').filter({ hasText: 'first connection' })).toBeVisible();
+  await expect(detail.locator('pre code')).toHaveText('work-inbox-mcp\n');
+  await expect(detail.getByRole('table')).toBeVisible();
+  await expect(detail.getByRole('link', { name: 'Documentation', exact: true })).toHaveAttribute(
+    'rel',
+    'noopener noreferrer',
+  );
+  await expect(detail.getByRole('link', { name: 'Unsafe link', exact: true })).toHaveCount(0);
+  await expect(detail.locator('img')).toHaveCount(0);
+  expect(imageRequests).toEqual([]);
+  const accept = await detail
+    .getByRole('button', { name: 'Accept work', exact: true })
+    .boundingBox();
+  const context = await detail.getByRole('heading', { name: 'Details', exact: true }).boundingBox();
+  expect(accept!.y).toBeLessThan(context!.y);
+  await page.screenshot({ path: 'test-results/work-presentation-detail.png', fullPage: true });
+  await expect(detail.getByText('Keep the current server.', { exact: true })).toHaveCount(0);
+  await detail.getByRole('button', { name: 'Show more', exact: true }).click();
+  await expect(detail.getByText('Keep the current server.', { exact: false }).last()).toBeVisible();
+  await detail.getByRole('button', { name: 'Show less', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(detail.getByRole('button', { name: 'Accept work', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/work-presentation-mobile.png', fullPage: true });
 });

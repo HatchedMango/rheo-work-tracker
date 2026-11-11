@@ -10,7 +10,6 @@ import {
   Check,
   ChevronRight,
   Search,
-  Circle,
   X,
   TerminalSquare,
   Activity,
@@ -28,6 +27,7 @@ import {
 import type { WorkStatus } from '../../src/shared/work-status.js';
 import './styles.css';
 import { Connections } from './Connections.js';
+import { WorkContent, ActivityContent, ContextChanges, workPreview } from './WorkContent.js';
 const views = ['active', 'history'] as const;
 type View = 'inbox' | 'connections' | (typeof views)[number];
 type StatusFilter = 'any' | WorkStatus;
@@ -113,12 +113,13 @@ function time(n: number) {
     minute: '2-digit',
   });
 }
-function Badge({ state }: { state: string }) {
+function Badge({ state, label }: { state: string; label?: string }) {
   return (
     <span className={`badge ${state}`}>
-      {state === 'review'
-        ? 'Review ready'
-        : statusLabels[state as WorkStatus]?.toLowerCase() || state.replaceAll('_', ' ')}
+      {label ||
+        (state === 'review'
+          ? 'Review ready'
+          : statusLabels[state as WorkStatus]?.toLowerCase() || state.replaceAll('_', ' '))}
     </span>
   );
 }
@@ -429,36 +430,47 @@ function App() {
                       <button
                         className={`work-card ${route.id === w.id ? 'chosen' : ''}`}
                         key={w.id}
+                        aria-pressed={route.id === w.id}
+                        aria-labelledby={`work-title-${w.id}`}
+                        aria-describedby={`work-meta-${w.id}`}
                         onClick={() => navigate(route.view, w.id)}
                       >
-                        <div className="card-top">
-                          <span className={`priority ${w.priority}`}>
-                            <span />
-                            {w.priority}
+                        <div className="card-heading">
+                          <h3 id={`work-title-${w.id}`}>{w.title}</h3>
+                          {w.priority !== 'normal' && (
+                            <span className={`priority ${w.priority}`}>
+                              <span />
+                              {w.priority}
+                            </span>
+                          )}
+                          <ChevronRight size={16} />
+                        </div>
+                        <p>{workPreview(w.objective)}</p>
+                        <div className="card-bottom" id={`work-meta-${w.id}`}>
+                          {w.priority !== 'normal' && (
+                            <span className="sr-only">{w.priority} priority.</span>
+                          )}
+                          <Badge
+                            state={state}
+                            label={
+                              w.attention.some((a) => a.kind === 'assignment')
+                                ? 'Needs decision'
+                                : undefined
+                            }
+                          />
+                          <span className="source-name" title={w.sourceName}>
+                            {w.sourceName}
                           </span>
-                          <span className="card-date">
+                          <time
+                            className="card-date"
+                            dateTime={new Date(w.createdAt).toISOString()}
+                            title={time(w.createdAt)}
+                          >
                             {new Date(w.createdAt).toLocaleDateString(undefined, {
                               month: 'short',
                               day: 'numeric',
                             })}
-                          </span>
-                        </div>
-                        <h3>{w.title}</h3>
-                        <p>{w.objective}</p>
-                        <div className="card-bottom">
-                          <Badge state={state} />
-                          <span className="attention-label">
-                            {w.attention.some((a) => a.kind === 'failure')
-                              ? 'Needs attention'
-                              : w.attention.some((a) => a.kind === 'assignment')
-                                ? 'Accept assignment'
-                                : w.attention.some((a) => a.kind === 'review')
-                                  ? 'Review result'
-                                  : state === 'accepted'
-                                    ? 'Ready when you are'
-                                    : ''}
-                          </span>
-                          <ChevronRight size={15} />
+                          </time>
                         </div>
                       </button>
                     );
@@ -485,19 +497,30 @@ function App() {
                 )}
               </section>
               {route.id ? (
-                <section className="detail" aria-label="Work detail">
+                <section className="detail" aria-label="Work detail" key={route.id}>
                   <div className="detail-top">
                     <button className="text-button" onClick={() => navigate(route.view)}>
                       <ArrowLeft size={15} />
                       Back to list
                     </button>
-                    <button
-                      className="icon-button"
-                      aria-label="Close detail"
-                      onClick={() => navigate(route.view)}
-                    >
-                      <X size={18} />
-                    </button>
+                    <div className="detail-tools">
+                      {editable && (
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => setCompose('edit')}
+                        >
+                          Edit context
+                        </button>
+                      )}
+                      <button
+                        className="icon-button"
+                        aria-label="Close detail"
+                        onClick={() => navigate(route.view)}
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
                   </div>
                   {!detail || detail.id !== route.id ? (
                     <p role="status">Loading detail…</p>
@@ -506,6 +529,11 @@ function App() {
                       <div className="detail-meta">
                         <Badge
                           state={workStatus(detail, detail.runs[0] || null, detail.assignment)}
+                          label={
+                            detail.attention.some((a) => a.kind === 'assignment')
+                              ? 'Needs decision'
+                              : undefined
+                          }
                         />
                         <span className={`priority ${detail.priority}`}>
                           <span />
@@ -514,45 +542,12 @@ function App() {
                       </div>
                       <h2 className="detail-title">{detail.title}</h2>
                       <div className="owner-line">
-                        <span>{detail.ownerId ? 'Assigned to you' : 'Unassigned'}</span>
-                        <span className="separator">/</span>
-                        <span>Created {time(detail.createdAt)}</span>
+                        <span>From {detail.sourceName}</span>
+                        <span className="separator">·</span>
+                        <time dateTime={new Date(detail.createdAt).toISOString()}>
+                          {time(detail.createdAt)}
+                        </time>
                       </div>
-                      <div className="detail-section">
-                        <h3>Objective</h3>
-                        <p className="preserve">{detail.objective}</p>
-                      </div>
-                      {detail.acceptanceCriteria.length > 0 && (
-                        <div className="detail-section">
-                          <h3>Acceptance criteria</h3>
-                          <ul className="criteria">
-                            {detail.acceptanceCriteria.map((c, i) => (
-                              <li key={i}>
-                                <Circle size={13} />
-                                {c}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {detail.references.length > 0 && (
-                        <div className="detail-section">
-                          <h3>References</h3>
-                          {detail.references.map((r) => (
-                            <a
-                              className="reference"
-                              key={r.id}
-                              href={r.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <LinkIcon size={14} />
-                              {r.system}
-                              <ArrowUpRight size={13} />
-                            </a>
-                          ))}
-                        </div>
-                      )}
                       {detail.lifecycle === 'open' && (
                         <div className="action-panel">
                           {detail.attention.some((a) => a.kind === 'failure') && (
@@ -606,11 +601,6 @@ function App() {
                             </>
                           ) : detail.assignment?.state !== 'accepted' ? (
                             <>
-                              <h3>
-                                {detail.assignment?.state === 'declined'
-                                  ? 'Declined assignment'
-                                  : 'Assignment'}
-                              </h3>
                               <div className="action-buttons">
                                 <button
                                   className="primary"
@@ -647,6 +637,43 @@ function App() {
                           )}
                         </div>
                       )}
+                      <section className="detail-section" aria-label="Details">
+                        <h3>Details</h3>
+                        <WorkContent text={detail.objective} />
+                      </section>
+                      {detail.acceptanceCriteria.length > 0 && (
+                        <div className="detail-section">
+                          <h3>Done when</h3>
+                          <ul className="criteria">
+                            {detail.acceptanceCriteria.map((c, i) => (
+                              <li key={i}>
+                                <span className="criterion-number" aria-hidden="true">
+                                  {i + 1}
+                                </span>
+                                <WorkContent text={c} />
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {detail.references.length > 0 && (
+                        <div className="detail-section">
+                          <h3>References</h3>
+                          {detail.references.map((r) => (
+                            <a
+                              className="reference"
+                              key={r.id}
+                              href={r.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <LinkIcon size={14} />
+                              {r.system}
+                              <ArrowUpRight size={13} />
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       {detail.runs.length > 0 && (
                         <div className="detail-section">
                           <h3>
@@ -659,7 +686,7 @@ function App() {
                                 Attempt · {time(r.createdAt)}
                                 <Badge state={r.state} />
                               </summary>
-                              {r.summary && <p className="preserve">{r.summary}</p>}
+                              {r.summary && <WorkContent text={r.summary} />}
                               {r.failure && <p className="failure-note">{r.failure}</p>}
                               {r.artifact && <pre className="artifact">{r.artifact}</pre>}
                               {!r.summary && !r.failure && (
@@ -714,15 +741,8 @@ function App() {
                                   <strong>{e.actorName}</strong>
                                   <span>{time(e.createdAt)}</span>
                                 </div>
-                                <p className="preserve">{e.message}</p>
-                                {e.type === 'edited' && (
-                                  <details className="edit-history">
-                                    <summary>Context changes</summary>
-                                    <pre className="artifact">
-                                      {JSON.stringify(e.data, null, 2)}
-                                    </pre>
-                                  </details>
-                                )}
+                                <ActivityContent text={e.message} />
+                                {e.type === 'edited' && <ContextChanges data={e.data} />}
                                 {e.references.map((r, i) => (
                                   <a
                                     key={i}
@@ -742,15 +762,6 @@ function App() {
                       </div>
                       {detail.lifecycle === 'open' && (
                         <div className="detail-footer">
-                          {editable && (
-                            <button
-                              className="text-button"
-                              disabled={busy}
-                              onClick={() => setCompose('edit')}
-                            >
-                              Edit context
-                            </button>
-                          )}
                           <button
                             className="text-button danger"
                             disabled={busy}
@@ -770,11 +781,7 @@ function App() {
                     </>
                   )}
                 </section>
-              ) : (
-                <section className="detail-placeholder">
-                  {list.items.length > 0 && <p>Select a work item</p>}
-                </section>
-              )}
+              ) : null}
             </div>
           </>
         )}

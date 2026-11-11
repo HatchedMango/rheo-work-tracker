@@ -48,6 +48,8 @@ npm run demo
 4. Add clarifying notes or **Edit context**, then do the work and **Mark complete**.
 5. Use **Work → Active** for current requests and **Work → History** for completed/cancelled work. A status dropdown narrows either view; the inbox shows only decisions waiting on you.
 
+Work rows show the title, a short preview, source, and status. Opening an item puts the decision controls near the title, followed by **Details** and **Done when**. Descriptions, criteria, and notes support Markdown formatting; long activity entries can be expanded, and context edits show readable before/after values. Embedded HTML stays escaped and remote images are not fetched.
+
 The UI has no task-creation form. Browser sessions cannot create work through the API; creation requires an external source credential. MCP is the supported intake path today; other integrations can use the same scoped API when implemented.
 
 You can decline an assignment without cancelling its work, pick it up later, and edit idle open work. Context edits retain before/after history. Cancellation ends the work and any active attempt; its history remains.

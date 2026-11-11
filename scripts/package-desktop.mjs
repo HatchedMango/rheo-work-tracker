@@ -39,13 +39,27 @@ writeFileSync(
 );
 const dependencies = [];
 for (const [path, info] of Object.entries(lock.packages)) {
-  if (!path.startsWith('node_modules/') || info.dev || !existsSync(path)) continue;
-  mkdirSync(dirname(join(payload, path)), { recursive: true });
-  cpSync(path, join(payload, path), { recursive: true, dereference: true });
+  if (!path.startsWith('node_modules/') || !existsSync(path)) continue;
   const metadata = JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'));
+  // Frontend dependencies are bundled by Vite, so retain their license notices
+  // even when npm classifies them as build-time rather than server dependencies.
+  const notices = readdirSync(path).filter(
+    (name) =>
+      /^(licen[cs]e|copying|notice)(\.|$)/i.test(name) && statSync(join(path, name)).isFile(),
+  );
+  const noticeDirectory = join(
+    resources,
+    'licenses',
+    `${encodeURIComponent(metadata.name)}-${metadata.version}`,
+  );
+  if (notices.length) mkdirSync(noticeDirectory, { recursive: true });
+  for (const notice of notices) cpSync(join(path, notice), join(noticeDirectory, notice));
   dependencies.push(
     `${metadata.name}@${metadata.version} — ${metadata.license || 'see package license'}`,
   );
+  if (info.dev) continue;
+  mkdirSync(dirname(join(payload, path)), { recursive: true });
+  cpSync(path, join(payload, path), { recursive: true, dereference: true });
 }
 const native = [];
 function trim(path) {
@@ -62,7 +76,7 @@ function trim(path) {
 trim(payload);
 writeFileSync(
   join(resources, 'THIRD_PARTY_LICENSES.txt'),
-  `Work Inbox ${pkg.version}\n\nNode ${process.version}: runtime/LICENSE\nDependency licenses are retained within app/node_modules.\n\n${dependencies.sort().join('\n')}\n`,
+  `Work Inbox ${pkg.version}\n\nNode ${process.version}: runtime/LICENSE\nServer and frontend/build dependency notices: licenses/.\nServer package licenses are also retained within app/node_modules.\n\n${dependencies.sort().join('\n')}\n`,
 );
 const minimum = process.arch === 'arm64' ? 'arm64-apple-macos13.0' : 'x86_64-apple-macos13.0';
 run('xcrun', [

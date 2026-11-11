@@ -98,6 +98,11 @@ export class WorkService {
       .all();
     return {
       ...w,
+      sourceName: this.db
+        .select({ name: s.actors.name })
+        .from(s.actors)
+        .where(eq(s.actors.id, w.createdBy))
+        .get()!.name,
       references: this.db.select().from(s.references).where(eq(s.references.workId, id)).all(),
       assignment:
         this.db.select().from(s.assignments).where(eq(s.assignments.workId, id)).get() ?? null,
@@ -165,15 +170,17 @@ export class WorkService {
       .where(where)
       .get()!.count;
     const items = this.db
-      .select()
+      .select({ work: s.work, sourceName: s.actors.name })
       .from(s.work)
+      .innerJoin(s.actors, eq(s.work.createdBy, s.actors.id))
       .where(where)
       .orderBy(desc(s.work.updatedAt), s.work.id)
       .limit(f.limit)
       .offset(f.offset)
       .all()
-      .map((w) => ({
+      .map(({ work: w, sourceName }) => ({
         ...w,
+        sourceName,
         assignment:
           this.db.select().from(s.assignments).where(eq(s.assignments.workId, w.id)).get() ?? null,
         run:

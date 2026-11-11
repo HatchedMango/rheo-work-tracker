@@ -226,6 +226,8 @@ describe('work lifecycle', () => {
     const w = service.create(a, createSchema.parse({ title: 'Follow-up', objective: 'Later' }));
     service.note(a, w.id, 'Context', [{ system: 'issue', url: 'https://example.com/issue' }]);
     expect(service.get(owner, w.id).createdBy).toBe(a.id);
+    expect(service.get(owner, w.id).sourceName).toBe('Capture agent');
+    expect(service.list(owner, listSchema.parse({})).items[0].sourceName).toBe('Capture agent');
     expect(service.get(owner, w.id).events[0].actorName).toBe('Capture agent');
     expect(() => service.action(a, w.id, { action: 'accept', revision: 2, message: '' })).toThrow(
       'cannot perform',

@@ -158,6 +158,7 @@ export const idempotency = sqliteTable('idempotency', {
 export type Work = typeof work.$inferSelect;
 export type Run = typeof runs.$inferSelect;
 export type Detail = Work & {
+  sourceName: string;
   references: (typeof references.$inferSelect)[];
   assignment: typeof assignments.$inferSelect | null;
   runs: Run[];

@@ -1,6 +1,6 @@
 {
   "name": "work-inbox",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -45,6 +45,8 @@
     "@vitejs/plugin-react": "5.2.0",
     "concurrently": "10.0.6",
     "prettier": "3.9.10",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "7.3.7",
