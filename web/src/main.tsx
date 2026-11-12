@@ -1,3 +1,4 @@
+import { StatusBadge, WorkerStatus } from './UI.js';
 import { Oversight } from './Oversight.js';
 import { ChangeTrackingView } from './Streams.js';
 import type { Stream } from '../../src/shared/streams.js';
@@ -6,6 +7,7 @@ import { createRoot } from 'react-dom/client';
 import {
   Inbox,
   Layers3,
+  GitPullRequest,
   Plug,
   Plus,
   ArrowUpRight,
@@ -124,14 +126,27 @@ function time(n: number) {
     minute: '2-digit',
   });
 }
-function Badge({ state, label }: { state: string; label?: string }) {
+function Badge({
+  state,
+  label,
+  covered = false,
+}: {
+  state: string;
+  label?: string;
+  covered?: boolean;
+}) {
+  if (covered && state === 'accepted')
+    return <StatusBadge state="covered" label="Stream coverage" />;
   return (
-    <span className={`badge ${state}`}>
-      {label ||
+    <StatusBadge
+      state={label === 'Needs decision' ? 'needs_decision' : state}
+      label={
+        label ||
         (state === 'review'
           ? 'Review ready'
-          : statusLabels[state as WorkStatus]?.toLowerCase() || state.replaceAll('_', ' '))}
-    </span>
+          : statusLabels[state as WorkStatus]?.toLowerCase() || state.replaceAll('_', ' '))
+      }
+    />
   );
 }
 function App() {
@@ -341,13 +356,16 @@ function App() {
             onClick={() => navigate('needs')}
           >
             <Inbox size={18} />
-            Needs you<span className="nav-count">{status?.inboxCount || 0}</span>
+            Needs you
+            <span className={`nav-count${status?.inboxCount ? ' needs-attention' : ''}`}>
+              {status?.inboxCount || 0}
+            </span>
           </button>
           <button
             className={!oversightView && !settings ? 'selected' : ''}
             onClick={() => navigate('active')}
           >
-            <Layers3 size={18} />
+            <GitPullRequest size={18} />
             Changes
           </button>
           <button className={settings ? 'selected' : ''} onClick={() => navigate('connections')}>
@@ -356,8 +374,7 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-note">
-          <span className="dot" />
-          <strong>No execution worker connected</strong>
+          <WorkerStatus workers={status?.workers} />
         </div>
       </aside>
       <main className={`main ${route.id || route.streamId ? 'has-selection' : ''}`}>
@@ -381,7 +398,7 @@ function App() {
           </div>
         )}
         {settings ? (
-          <Connections request={api} />
+          <Connections request={api} workers={status?.workers} />
         ) : oversightView ? (
           <Oversight
             view={route.view === 'needs' ? 'needs' : 'streams'}
@@ -506,6 +523,7 @@ function App() {
                           )}
                           <Badge
                             state={state}
+                            covered={w.assignment?.state === 'covered'}
                             label={
                               w.attention.some((a) => a.kind === 'assignment')
                                 ? 'Needs decision'
@@ -591,6 +609,7 @@ function App() {
                       <div className="detail-meta">
                         <Badge
                           state={workStatus(detail, detail.runs[0] || null, detail.assignment)}
+                          covered={detail.assignment?.state === 'covered'}
                           label={
                             detail.attention.some((a) => a.kind === 'assignment')
                               ? 'Needs decision'
@@ -674,7 +693,9 @@ function App() {
                           ) : run ? (
                             <>
                               <h3>{run.state === 'queued' ? 'Queued' : 'Running'}</h3>
-                              <p>No execution worker connected</p>
+                              <p>
+                                <WorkerStatus workers={status?.workers} />
+                              </p>
                               <Badge state={run.state} />
                             </>
                           ) : !['accepted', 'covered'].includes(detail.assignment?.state ?? '') ? (

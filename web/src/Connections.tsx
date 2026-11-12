@@ -1,3 +1,5 @@
+import { StatusBadge, WorkerStatus } from './UI.js';
+import type { Status } from '../../src/services/work.js';
 import { useEffect, useRef, useState } from 'react';
 import { X, Copy, ArrowUpRight, Check } from 'lucide-react';
 import type { AgentConnection, AgentSetup } from '../../src/services/connections.js';
@@ -27,7 +29,13 @@ function date(n: number) {
     minute: '2-digit',
   });
 }
-export function Connections({ request }: { request: Request }) {
+export function Connections({
+  request,
+  workers,
+}: {
+  request: Request;
+  workers?: Status['workers'];
+}) {
   const [items, setItems] = useState<AgentConnection[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [phase, setPhase] = useState<'choose' | 'configure' | 'verify' | null>(null);
@@ -182,6 +190,23 @@ export function Connections({ request }: { request: Request }) {
       setError('Clipboard unavailable. Select the text below and copy it manually.');
     }
   }
+  function setRelay(row: AgentConnection, enabled: boolean) {
+    setItems((items) =>
+      items.map((item) => (item.id === row.id ? { ...item, relayFeedback: enabled } : item)),
+    );
+    void perform(async () => {
+      try {
+        await request(`/connections/${row.id}/sync`, { relayFeedback: enabled });
+      } catch (error) {
+        setItems((items) =>
+          items.map((item) =>
+            item.id === row.id ? { ...item, relayFeedback: row.relayFeedback } : item,
+          ),
+        );
+        throw error;
+      }
+    });
+  }
   const current = items.find((i) => i.id === setup?.id) || setup;
   return (
     <section className="settings-page connections-page">
@@ -205,7 +230,7 @@ export function Connections({ request }: { request: Request }) {
                     <strong>{row.name}</strong>
                     <span className="connection-client">{clientLabels[row.client]}</span>
                   </div>
-                  <span className={`badge ${row.state}`}>{stateLabels[row.state]}</span>
+                  <StatusBadge state={row.state} label={stateLabels[row.state]} />
                 </div>
                 <p className="fine">
                   {row.state === 'disconnected'
@@ -221,6 +246,15 @@ export function Connections({ request }: { request: Request }) {
                     ? `Context retrieved ${date(row.workflowRead.lastReadAt)}${row.workflowRead.project ? ` · ${row.workflowRead.project}` : ''}`
                     : 'No workflow context retrieved yet.'}
                 </p>
+                <p className="fine">
+                  {row.sync?.lastCheckpointAt
+                    ? `Last progress checkpoint ${date(row.sync.lastCheckpointAt)}`
+                    : 'No progress checkpoint recorded.'}
+                  {row.sync?.needsCheckpoint ? ' · Latest chat turn needs an update.' : ''}
+                  {row.sync?.pendingWrites
+                    ? ` · ${row.sync.pendingWrites} pending at last check.`
+                    : ''}
+                </p>
                 <div className="connection-actions">
                   {row.state === 'disconnected' ? (
                     <button className="text-button" onClick={() => begin(row)}>
@@ -228,6 +262,15 @@ export function Connections({ request }: { request: Request }) {
                     </button>
                   ) : (
                     <>
+                      <label className="fine">
+                        <input
+                          type="checkbox"
+                          checked={row.relayFeedback}
+                          disabled={busy}
+                          onChange={(e) => setRelay(row, e.currentTarget.checked)}
+                        />{' '}
+                        Sync decisions from my chats
+                      </label>
                       <button
                         className="text-button"
                         disabled={busy}
@@ -267,7 +310,9 @@ export function Connections({ request }: { request: Request }) {
       </article>
       <article className="settings-card">
         <h2>Execution worker</h2>
-        <p>No execution worker connected</p>
+        <p>
+          <WorkerStatus workers={workers} />
+        </p>
       </article>
       {error && !phase && (
         <p role="alert" className="error">
@@ -514,9 +559,9 @@ export function Connections({ request }: { request: Request }) {
         {phase === 'verify' && setup && (
           <>
             <div className="verification-status">
-              <span className={`badge ${current?.state}`}>
+              <StatusBadge state={current?.state ?? 'pending'}>
                 {stateLabels[current?.state || 'pending']}
-              </span>
+              </StatusBadge>
               {current?.lastToolAt && (
                 <p className="fine">
                   Last tool call {date(current.lastToolAt)} · {current.lastTool}

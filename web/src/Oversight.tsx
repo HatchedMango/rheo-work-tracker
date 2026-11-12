@@ -1,5 +1,14 @@
+import { StatusBadge } from './UI.js';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronRight, ArrowUpRight } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronRight,
+  ArrowUpRight,
+  Hand,
+  MessageCircle,
+  CircleHelp,
+  ArrowRight,
+} from 'lucide-react';
 import type { Stream, ContextEntry, Output } from '../../src/shared/streams.js';
 import type { AttentionItem, HumanAction } from '../../src/shared/oversight.js';
 import type { OversightService } from '../../src/services/oversight.js';
@@ -25,13 +34,21 @@ function Pager({
 }) {
   return total > 30 ? (
     <div className="pagination">
-      <button disabled={!offset} onClick={() => onChange(Math.max(0, offset - 30))}>
+      <button
+        className="secondary"
+        disabled={!offset}
+        onClick={() => onChange(Math.max(0, offset - 30))}
+      >
         Previous
       </button>
       <span>
         {offset + 1}–{Math.min(offset + 30, total)} of {total}
       </span>
-      <button disabled={offset + 30 >= total} onClick={() => onChange(offset + 30)}>
+      <button
+        className="secondary"
+        disabled={offset + 30 >= total}
+        onClick={() => onChange(offset + 30)}
+      >
         Next
       </button>
     </div>
@@ -104,9 +121,16 @@ function RequestCard({
   }
   const respondable = ['question', 'action'].includes(item.kind);
   return (
-    <article className="request-card">
+    <article className="request-card" data-kind={item.kind}>
       <div className="request-heading">
         <span className="eyebrow">
+          {item.kind === 'action' ? (
+            <Hand size={14} aria-hidden="true" />
+          ) : item.kind === 'question' ? (
+            <MessageCircle size={14} aria-hidden="true" />
+          ) : (
+            <CircleHelp size={14} aria-hidden="true" />
+          )}
           {item.kind === 'action'
             ? 'Human action'
             : item.kind === 'question'
@@ -145,7 +169,10 @@ function RequestCard({
       {item.body !== item.title && <p>{item.body}</p>}
       {item.direct.length > 0 && (
         <div className="unlock-list">
-          <span>Unlocks</span>
+          <span>
+            <ArrowRight size={13} aria-hidden="true" />
+            Unlocks
+          </span>
           {item.direct.map((d) => (
             <button
               className="text-button"
@@ -163,7 +190,10 @@ function RequestCard({
       )}
       {respondable ? (
         <>
-          <button onClick={() => setExpanded((x) => !x)}>
+          <button
+            className={expanded ? 'secondary' : 'primary'}
+            onClick={() => setExpanded((x) => !x)}
+          >
             {expanded ? 'Close response' : item.kind === 'question' ? 'Answer' : 'Respond'}
           </button>
           {expanded && (
@@ -198,6 +228,7 @@ function RequestCard({
                 {item.kind === 'action' && (
                   <>
                     <button
+                      className="secondary"
                       type="button"
                       disabled={busy || !record || !response.trim()}
                       onClick={() => void save('in_progress')}
@@ -205,6 +236,7 @@ function RequestCard({
                       Still working on it
                     </button>
                     <button
+                      className="secondary danger"
                       type="button"
                       disabled={busy || !record || !response.trim()}
                       onClick={() => void save('cancelled')}
@@ -219,6 +251,7 @@ function RequestCard({
         </>
       ) : (
         <button
+          className="primary"
           onClick={() =>
             item.workId ? onWork(item.workId) : item.streamId && onStream(item.streamId)
           }
@@ -381,9 +414,9 @@ export function Oversight({
         </nav>
         <div className="stream-title">
           <h2>{s.title}</h2>
-          <span className={`badge ${s.state}`}>
+          <StatusBadge state={s.state}>
             {s.state === 'proposed' ? 'Needs decision' : s.state}
-          </span>
+          </StatusBadge>
         </div>
         <WorkContent text={s.outcome} />
         <p className="muted">
@@ -409,51 +442,68 @@ export function Oversight({
               <button className="primary" disabled={busy} onClick={() => void action('accept')}>
                 Approve direction & routine work
               </button>
-              <button disabled={busy} onClick={() => void action('decline')}>
+              <button className="secondary" disabled={busy} onClick={() => void action('decline')}>
                 Decline
               </button>
             </>
           )}
           {s.state === 'active' && !s.approvalId && !s.coverage && (
-            <button disabled={busy} onClick={() => void action('enable_coverage')}>
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => void action('enable_coverage')}
+            >
               Enable routine work coverage
             </button>
           )}
           {['active', 'paused'].includes(s.state) && (
             <>
               <button
+                className="secondary"
                 disabled={busy}
                 onClick={() => void action(s.state === 'active' ? 'pause' : 'resume')}
               >
                 {s.state === 'active' ? 'Pause' : 'Resume'}
               </button>
-              <button disabled={busy} onClick={() => void action('close')}>
+              <button
+                className={s.reviewRequested === 1 ? 'primary' : 'secondary'}
+                disabled={busy}
+                onClick={() => void action('close')}
+              >
                 Accept outcome & close
               </button>
             </>
           )}
           {['closed', 'declined'].includes(s.state) && (
-            <button disabled={busy} onClick={() => void action('reopen')}>
+            <button className="secondary" disabled={busy} onClick={() => void action('reopen')}>
               Reopen stream
             </button>
           )}
           {s.reviewRequested === 1 && (
-            <button disabled={busy} onClick={() => void action('keep_open')}>
+            <button className="secondary" disabled={busy} onClick={() => void action('keep_open')}>
               Reviewed · keep open
             </button>
           )}
         </div>
         {s.pendingScope && (
-          <section className="oversight-section">
+          <section className="oversight-section scope-decision">
             <h3>Proposed scope</h3>
             <h4>{s.pendingScope.title}</h4>
             <WorkContent text={s.pendingScope.outcome} />
             <WorkContent text={s.pendingScope.constraints} />
             <div className="button-row">
-              <button disabled={busy} onClick={() => void action('accept_scope')}>
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() => void action('accept_scope')}
+              >
                 Approve scope
               </button>
-              <button disabled={busy} onClick={() => void action('reject_scope')}>
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => void action('reject_scope')}
+              >
                 Keep current scope
               </button>
             </div>
@@ -466,6 +516,27 @@ export function Oversight({
             {s.outcomeAvailableAt && <p>Outcome reported available</p>}
             {s.reportedAt && <small>Reported {when(s.reportedAt)}</small>}
           </section>
+        )}
+        {detail.sync.items.length > 0 && (
+          <details className="sync-summary">
+            <summary>
+              {detail.sync.items.some((item) => item.state === 'needs_update')
+                ? 'Chat update pending'
+                : `Progress recorded ${when(detail.sync.items[0].lastCheckpointAt!)}`}
+            </summary>
+            {detail.sync.items.map((session) => (
+              <div key={session.id} className="fine">
+                <strong>{session.client === 'codex' ? 'Codex' : 'Claude Code'}</strong>
+                {' · '}
+                {session.lastCheckpointAt
+                  ? `Checkpoint ${when(session.lastCheckpointAt)}`
+                  : 'No checkpoint yet'}
+                {session.needsCheckpoint ? ' · Latest turn not recorded' : ''}
+                {session.pendingWrites ? ` · ${session.pendingWrites} pending at last check` : ''}
+                {session.summary && <p>{session.summary}</p>}
+              </div>
+            ))}
+          </details>
         )}
         {s.dependencies.length > 0 && (
           <section className="oversight-section">
@@ -483,9 +554,11 @@ export function Oversight({
                       ? onStream(d.source.id)
                       : d.source.kind === 'change'
                         ? onWork(d.source.id)
-                        : document
-                            .getElementById('stream-requests')
-                            ?.scrollIntoView({ behavior: 'smooth' })
+                        : document.getElementById('stream-requests')?.scrollIntoView({
+                            behavior: matchMedia('(prefers-reduced-motion: reduce)').matches
+                              ? 'auto'
+                              : 'smooth',
+                          })
                   }
                 >
                   {d.title}
@@ -505,6 +578,7 @@ export function Oversight({
           {attention?.total === 0 && <p className="muted">Nothing waiting on you.</p>}
           {attention && attention.total > attention.items.length && (
             <button
+              className="secondary"
               onClick={() => {
                 onStream(null);
               }}
@@ -524,9 +598,14 @@ export function Oversight({
                 <p>{child.phase || child.progressSummary || child.outcome}</p>
               </div>
               <span>
-                {child.dependencies.some((d) => !d.satisfied)
-                  ? 'Waiting on a prerequisite'
-                  : child.state}
+                <StatusBadge
+                  state={child.dependencies.some((d) => !d.satisfied) ? 'blocked' : child.state}
+                  label={
+                    child.dependencies.some((d) => !d.satisfied)
+                      ? 'Waiting on a prerequisite'
+                      : child.state
+                  }
+                />
                 <ChevronRight size={14} />
               </span>
             </button>
@@ -577,7 +656,11 @@ export function Oversight({
                       Include the following visible proposals and outdated coverage in this approved
                       scope. This is an owner decision.
                     </p>
-                    <button disabled={busy} onClick={() => void coverExisting()}>
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={() => void coverExisting()}
+                    >
                       Cover visible proposals
                     </button>
                   </>
@@ -608,7 +691,8 @@ export function Oversight({
               <WorkContent text={e.body} />
               {e.answer && (
                 <p>
-                  <strong>Answer:</strong> {e.answer}
+                  <strong>{e.answerSource ? 'Answer reported from chat:' : 'Answer:'}</strong>{' '}
+                  {e.answer}
                 </p>
               )}
             </article>
@@ -639,7 +723,9 @@ export function Oversight({
       {error && (
         <p role="alert" className="error-banner">
           {error}
-          <button onClick={reload}>Retry</button>
+          <button className="secondary" onClick={reload}>
+            Retry
+          </button>
         </p>
       )}
       {view === 'needs' ? (
@@ -696,19 +782,27 @@ export function Oversight({
                   <p className="muted">No progress report yet</p>
                 )}
                 <div className="outcome-facts">
-                  <span>{s.phase || s.state}</span>
-                  {s.needsYou > 0 && <span>{s.needsYou} need you</span>}
+                  {(s.phase || s.state !== 'active' || !s.summary.working) && (
+                    <StatusBadge state={s.state} label={s.phase || s.state} />
+                  )}
+                  {s.needsYou > 0 && (
+                    <StatusBadge state="needs_decision">
+                      <Hand size={12} aria-hidden="true" />
+                      {s.needsYou} need you
+                    </StatusBadge>
+                  )}
                   {s.summary.working > 0 && (
-                    <span>
+                    <StatusBadge state="working">
+                      <span className="status-dot" aria-hidden="true" />
                       {s.summary.working} {s.summary.working === 1 ? 'change' : 'changes'} moving
-                    </span>
+                    </StatusBadge>
                   )}
                   {s.summary.blocked + s.summary.waitingStreams > 0 && (
-                    <span>
+                    <StatusBadge state="blocked">
                       {s.summary.blocked} changes · {s.summary.waitingStreams} streams waiting
-                    </span>
+                    </StatusBadge>
                   )}
-                  <span>
+                  <span className="inventory-count">
                     {s.summary.delivered} of {s.summary.changes} changes delivered
                   </span>
                   {s.childrenCount > 0 && <span>{s.childrenCount} feeding streams</span>}
@@ -749,6 +843,7 @@ function ResolvedAction({
       <small>{action.state}</small>
       <h4>{action.title}</h4>
       <p>{action.response}</p>
+      {action.responseSource && <small>Response reported from chat</small>}
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -769,7 +864,7 @@ function ResolvedAction({
           Reopen with a reason
           <input value={response} required onChange={(e) => setResponse(e.target.value)} />
         </label>
-        <button>Reopen request</button>
+        <button className="secondary">Reopen request</button>
       </form>
       {error && <p role="alert">{error}</p>}
     </article>

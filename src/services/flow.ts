@@ -33,7 +33,14 @@ export function flowDependencies(store: Store, id: string): FlowEdge[] {
     satisfied: !!satisfied,
     evidence: satisfied
       ? kind === 'human_action' || rest.condition === 'outcome_accepted'
-        ? 'human'
+        ? kind === 'human_action' &&
+          (
+            store.raw.prepare('SELECT responseSource FROM human_actions WHERE id=?').get(id) as {
+              responseSource: string | null;
+            }
+          )?.responseSource
+          ? 'reported'
+          : 'human'
         : 'reported'
       : 'unknown',
   }));

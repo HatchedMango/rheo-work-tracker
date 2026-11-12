@@ -1,3 +1,4 @@
+import { StatusBadge } from './UI.js';
 import { ChevronRight, ArrowUpRight } from 'lucide-react';
 import type { Detail } from '../../src/db/schema.js';
 import { WorkContent } from './WorkContent.js';
@@ -45,7 +46,7 @@ export function ChangeTrackingView({
           )}
           {m.progress !== 'unreported' && (
             <div className="reported-progress">
-              <span className={`badge ${m.progress}`}>{m.progress}</span>
+              <StatusBadge state={m.progress} label={m.progress} />
               <small>
                 Reported by {m.reporterName}
                 {m.reportedAt ? ` · ${date(m.reportedAt)}` : ''}
@@ -63,13 +64,13 @@ export function ChangeTrackingView({
           )}
           <div className="dependency-heading">
             <h4>Prerequisites</h4>
-            <span className={`assessment ${m.assessmentState}`}>
+            <StatusBadge className="assessment" state={m.assessmentState}>
               {m.assessmentState === 'unknown'
                 ? 'Not assessed'
                 : m.assessmentState === 'stale'
                   ? 'Assessment stale'
                   : 'Agent assessed'}
-            </span>
+            </StatusBadge>
           </div>
           {!m.prerequisites.length && m.assessmentState !== 'unknown' && (
             <p className="muted">No prerequisites recorded.</p>

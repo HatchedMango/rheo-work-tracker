@@ -76,7 +76,7 @@ If you cannot access or update local MCP settings in this environment, say so an
     : `${shellQuote(node)} ${shellQuote(workflowHelper)}`;
   const workflowArgs = `--client ${shellQuote(client === 'claude-code' ? 'claude-code' : 'codex')} --credential-file ${shellQuote(credentialPath)} --helper ${shellQuote(workflowHelper)} --server-name ${shellQuote(serverName)}${standalone ? '' : ` --helper-node ${shellQuote(node)}`}`;
   const workflowPrompt = ['codex', 'claude-code'].includes(client)
-    ? `Set up the Work Inbox project workflow for ${target} in the current project. Preserve existing files and settings. The MCP server is ${serverName}; do not duplicate or replace its configuration. Keep the credential in its existing protected file and never print its contents.\n\nUse this local helper, replacing PROJECT with the explicit absolute project directory:\n${workflowPrefix} preview --project PROJECT ${workflowArgs}\n\nIf the preview has no conflicts, apply the same command with install instead of preview. Use check to inspect freshness and remove to undo only managed content. Bind a stream or change only if explicitly selected, using --stream-id ID or --change-id ID. Never infer a stream from the project path.\n\n${client === 'claude-code' ? 'This installs a project skill, a managed CLAUDE.md section and a local SessionStart command hook for startup/resume/clear/compaction.' : 'This installs a project skill and a managed AGENTS.md section. It uses explicit context retrieval; automatic lifecycle hooks are not installed.'}\n\nStart a fresh client session and use get_workflow and get_stream_context from ${serverName}. Without a selection, getting stream choices is expected. Verify actual fresh-session delivery separately from MCP connectivity; a helper or launcher check alone does not prove client delivery. Do not create sample work.`
+    ? `Set up the Work Inbox project workflow for ${target} in the current project. Preserve existing files and settings. The MCP server is ${serverName}; do not duplicate or replace its configuration. Keep the credential in its existing protected file and never print its contents.\n\nUse this local helper, replacing PROJECT with the explicit absolute project directory:\n${workflowPrefix} preview --project PROJECT ${workflowArgs}\n\nIf the preview has no conflicts, apply the same command with install instead of preview. Use check to inspect freshness and remove to undo only managed content. Bind a stream or change only if explicitly selected, using --stream-id ID or --change-id ID. Never infer a stream from the project path.\n\nThis installs project guidance and local SessionStart, UserPromptSubmit and Stop hooks for startup/resume/compaction, prompt reconciliation and end-of-turn checkpoint checks. Review and trust those hooks in the client. Preserve existing hooks, including Herdr. Chat feedback relay is a separate connection permission; enable Sync decisions from my chats only for a trusted agent.\n\nStart a fresh client session and use get_workflow and get_stream_context from ${serverName}. Without a selection, getting stream choices is expected. Verify actual fresh-session delivery separately from MCP connectivity; a helper or launcher check alone does not prove client delivery. Do not create sample work.`
     : null;
   return {
     workflowPrompt,
@@ -127,6 +127,26 @@ export class ConnectionService {
     const { credentialPath, idempotencyKey, credentialId, ...c } = row.connection;
     return {
       ...c,
+      relayFeedback: !!(
+        this.store.raw
+          .prepare('SELECT relayFeedback FROM workflow_permissions WHERE credentialId=?')
+          .get(credentialId) as { relayFeedback: number } | undefined
+      )?.relayFeedback,
+      sync:
+        (this.store.raw
+          .prepare(
+            'SELECT sessionId,lastContextAt,lastCheckpointAt,needsCheckpoint,pendingWrites,queueReportedAt FROM workflow_sessions WHERE credentialId=? ORDER BY lastEventAt DESC LIMIT 1',
+          )
+          .get(credentialId) as
+          | {
+              sessionId: string;
+              lastContextAt: number | null;
+              lastCheckpointAt: number | null;
+              needsCheckpoint: number;
+              pendingWrites: number;
+              queueReportedAt: number | null;
+            }
+          | undefined) ?? null,
       workflowRead:
         (this.store.raw
           .prepare(

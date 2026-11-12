@@ -287,6 +287,7 @@ export const streamContext = sqliteTable('stream_context', {
   answer: text(),
   answeredBy: text().references(() => actors.id),
   answeredAt: integer(),
+  answerSource: text(),
   revision: integer().notNull(),
   createdAt: integer().notNull(),
   updatedAt: integer().notNull(),
@@ -366,6 +367,7 @@ export const humanActions = sqliteTable('human_actions', {
   state: text().notNull(),
   response: text().notNull(),
   respondedBy: text().references(() => actors.id),
+  responseSource: text(),
   revision: integer().notNull(),
   createdAt: integer().notNull(),
   updatedAt: integer().notNull(),
@@ -401,3 +403,48 @@ export const streamOutputs = sqliteTable('stream_outputs', {
   reportedAt: integer().notNull(),
   revision: integer().notNull(),
 });
+export const workflowPermissions = sqliteTable('workflow_permissions', {
+  credentialId: text()
+    .primaryKey()
+    .references(() => credentials.id),
+  relayFeedback: integer().notNull().default(0),
+  updatedAt: integer().notNull(),
+});
+export const workflowSessions = sqliteTable(
+  'workflow_sessions',
+  {
+    id: text().primaryKey(),
+    credentialId: text()
+      .notNull()
+      .references(() => credentials.id),
+    sessionId: text().notNull(),
+    client: text().notNull(),
+    project: text().notNull(),
+    streamId: text().references(() => streams.id),
+    changeId: text().references(() => work.id),
+    turnId: text().notNull(),
+    lastEvent: text().notNull(),
+    lastEventAt: integer().notNull(),
+    lastContextAt: integer(),
+    lastCheckpointAt: integer(),
+    checkpointTurnId: text(),
+    needsCheckpoint: integer().notNull().default(1),
+    summary: text().notNull().default(''),
+    pendingWrites: integer().notNull().default(0),
+    queueReportedAt: integer(),
+  },
+  (t) => [uniqueIndex('workflow_session_identity').on(t.credentialId, t.sessionId)],
+);
+export const workflowReceipts = sqliteTable(
+  'workflow_receipts',
+  {
+    credentialId: text()
+      .notNull()
+      .references(() => credentials.id),
+    eventId: text().notNull(),
+    fingerprint: text().notNull(),
+    response: text().notNull(),
+    createdAt: integer().notNull(),
+  },
+  (t) => [uniqueIndex('workflow_receipt_identity').on(t.credentialId, t.eventId)],
+);

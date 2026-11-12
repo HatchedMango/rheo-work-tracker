@@ -1,5 +1,7 @@
 import * as c from '../shared/streams.js';
 import * as o from '../shared/oversight.js';
+import { syncEventSchema } from '../shared/sync.js';
+import { SyncOutbox } from '../workflow/outbox.js';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -12,7 +14,7 @@ const request = apiClient(
   { diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1' },
 );
 const server = new McpServer(
-  { name: 'work-inbox', version: '0.3.0' },
+  { name: 'work-inbox', version: '0.3.2' },
   { instructions: c.workflowInstructions },
 );
 async function report(activity: { kind: string; tool?: string }) {
@@ -103,6 +105,31 @@ const query = (path: string, args: Record<string, unknown>) =>
         .map(([k, v]) => [k, String(v)]),
     )}`,
   );
+server.registerTool(
+  'sync_work',
+  {
+    description:
+      'Save one structured checkpoint atomically: progress, findings and exact human responses from this chat. Read the lifecycle-provided session/turn selection first. Requires enabled chat-feedback permission for responses; never infer approval from stop/idle. Event ID is an idempotency key. Missing tool requires client reload or the local workflow checkpoint helper.',
+    inputSchema: syncEventSchema.shape,
+  },
+  (args) =>
+    result('sync_work', async () => {
+      const input = syncEventSchema.parse(args);
+      const outbox = new SyncOutbox(
+        process.env.WORK_INBOX_CREDENTIAL_FILE || join(dataDir, 'agent.json'),
+        input.project,
+        input.client,
+      );
+      outbox.enqueue(input);
+      const delivery = await outbox.flush();
+      return {
+        recorded: !delivery.pending && !delivery.conflicts.length && !delivery.busy,
+        pending: delivery.pending,
+        conflicts: delivery.conflicts,
+        results: delivery.results,
+      };
+    }),
+);
 server.registerTool(
   'get_workflow',
   {

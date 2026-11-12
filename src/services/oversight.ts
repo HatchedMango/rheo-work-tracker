@@ -23,6 +23,9 @@ import {
   impactIndex,
 } from './flow.js';
 import { readTracking } from './stream-data.js';
+import { allowFeedback } from './feedback.js';
+import type { FeedbackOrigin } from '../shared/sync.js';
+import { SyncService } from './sync.js';
 export class OversightService {
   constructor(public streams: StreamService) {}
   get work() {
@@ -102,8 +105,14 @@ export class OversightService {
       );
     });
   }
-  respond(a: Actor, id: string, input: z.input<typeof c.humanResponseSchema>) {
+  respond(
+    a: Actor,
+    id: string,
+    input: z.input<typeof c.humanResponseSchema>,
+    source?: FeedbackOrigin,
+  ) {
     this.streams.allow(a);
+    if (source) allowFeedback(this.store, a, source);
     const p = c.humanResponseSchema.parse(input);
     return this.work.tx(() =>
       this.streams.retry(
@@ -114,7 +123,7 @@ export class OversightService {
         () => {
           const h = this.action(a, id);
           ensure(
-            a.scope === 'owner' || (h.createdBy === a.id && p.state === 'cancelled'),
+            a.scope === 'owner' || !!source || (h.createdBy === a.id && p.state === 'cancelled'),
             403,
             'Only the owner can report human action progress or completion.',
           );
@@ -126,12 +135,13 @@ export class OversightService {
           ensure(h.revision === p.revision, 409, 'Human action changed. Reload and reconcile.');
           this.raw
             .prepare(
-              'UPDATE human_actions SET state=?,response=?,respondedBy=?,revision=revision+1,updatedAt=? WHERE id=?',
+              'UPDATE human_actions SET state=?,response=?,respondedBy=?,revision=revision+1,updatedAt=?,responseSource=? WHERE id=?',
             )
-            .run(p.state, p.response, a.id, this.now(), id);
+            .run(p.state, p.response, a.id, this.now(), source ? JSON.stringify(source) : null, id);
           this.streams.event(a, h.streamId, 'human_action_response', p.response, {
             id,
             state: p.state,
+            ...(source ? { source } : {}),
           });
           return id;
         },
@@ -139,8 +149,8 @@ export class OversightService {
       ),
     );
   }
-  answer(a: Actor, id: string, input: z.input<typeof c.answerSchema>) {
-    this.streams.allow(a, ['owner']);
+  answer(a: Actor, id: string, input: z.input<typeof c.answerSchema>, source?: FeedbackOrigin) {
+    allowFeedback(this.store, a, source);
     const p = c.answerSchema.parse(input);
     return this.work.tx(() =>
       this.streams.retry(
@@ -158,12 +168,20 @@ export class OversightService {
           );
           this.raw
             .prepare(
-              "UPDATE stream_context SET answer=?,answeredBy=?,answeredAt=?,state='resolved',revision=revision+1,updatedAt=? WHERE id=?",
+              "UPDATE stream_context SET answer=?,answeredBy=?,answeredAt=?,state='resolved',revision=revision+1,updatedAt=?,answerSource=? WHERE id=?",
             )
-            .run(p.answer, a.id, this.now(), this.now(), id);
+            .run(
+              p.answer,
+              a.id,
+              this.now(),
+              this.now(),
+              source ? JSON.stringify(source) : null,
+              id,
+            );
           this.streams.event(a, e.streamId, 'question_answered', p.answer, {
             id,
             question: e.body,
+            ...(source ? { source } : {}),
           });
           return id;
         },
@@ -797,6 +815,7 @@ export class OversightService {
         .get(id) as { changes: number; delivered: number };
       return {
         stream,
+        sync: new SyncService(this).list(a, id),
         summary,
         ancestors: lineage(this.store, id).slice(1),
         children: {

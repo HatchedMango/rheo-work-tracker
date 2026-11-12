@@ -1,0 +1,36 @@
+:root {
+  --canvas: #f7f8fa;
+  --surface: #fff;
+  --ink: #23262c;
+  --body: #434b57;
+  --muted: #656d79;
+  --subtle: #697280;
+  --line: #e3e6eb;
+  --control-line: #cbd1db;
+  --soft: #f0f2f6;
+  --accent: #4263c7;
+  --accent-hover: #3656b5;
+  --accent-soft: #edf2ff;
+  --success: #20764f;
+  --success-soft: #eaf5ee;
+  --attention: #8f5c12;
+  --attention-line: #c28b36;
+  --attention-soft: #fff5e4;
+  --danger: #a4423b;
+  --danger-soft: #fff0ed;
+  --primary: #292c33;
+  --primary-hover: #414651;
+  --on-primary: #fff;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-card: 12px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --shadow-card: 0 2px 3px rgb(27 39 62 / 2.5%), 0 8px 24px rgb(27 39 62 / 6.5%);
+  --shadow-hover: 0 3px 6px rgb(27 39 62 / 5%), 0 12px 30px rgb(27 39 62 / 9%);
+  --shadow-dialog: 0 8px 24px rgb(27 39 62 / 8%), 0 24px 70px rgb(27 39 62 / 16%);
+}

@@ -1,4 +1,6 @@
 import { OversightService } from '../services/oversight.js';
+import { SyncService } from '../services/sync.js';
+import { syncEventSchema, queueReportSchema } from '../shared/sync.js';
 import * as oversightContracts from '../shared/oversight.js';
 import { StreamService } from '../services/streams.js';
 import * as streamContracts from '../shared/streams.js';
@@ -48,6 +50,7 @@ export async function createApp(
   const service = new WorkService(store, options.clock, options.allowSimulation);
   const streams = new StreamService(service);
   const oversight = new OversightService(streams);
+  const sync = new SyncService(oversight);
   const connections = new ConnectionService(store, {
     origin: options.origin,
     directory:
@@ -150,6 +153,28 @@ export async function createApp(
     return { ok: true };
   });
   app.get('/api/status', async (req) => service.status(authenticate(req)));
+  app.get('/api/sync', async (req) =>
+    sync.list(
+      authenticate(req),
+      z.object({ streamId: z.uuid().optional() }).parse(req.query).streamId,
+    ),
+  );
+  app.post('/api/sync/events', async (req) =>
+    sync.event(writeActor(req), syncEventSchema.parse(req.body)),
+  );
+  app.post('/api/sync/queue', async (req) =>
+    sync.queue(writeActor(req), queueReportSchema.parse(req.body)),
+  );
+  app.post('/api/connections/:id/sync', async (req) => {
+    const actor = writeActor(req);
+    connections.owner(actor);
+    const body = z.object({ relayFeedback: z.boolean() }).strict().parse(req.body);
+    return sync.permission(
+      actor,
+      connections.row(idOf(req.params)).connection.credentialId,
+      body.relayFeedback,
+    );
+  });
   app.get('/api/connections', async (req) => ({ items: connections.list(authenticate(req)) }));
   app.post('/api/connections', async (req, reply) => {
     const actor = writeActor(req);
@@ -396,5 +421,5 @@ export async function createApp(
   });
   if (options.publicDir && existsSync(options.publicDir))
     await app.register(serveStatic, { root: options.publicDir });
-  return { app, auth, service, connections, streams, oversight };
+  return { app, auth, service, connections, streams, oversight, sync };
 }

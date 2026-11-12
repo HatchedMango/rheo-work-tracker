@@ -214,12 +214,17 @@ try {
     '--stream-id',
     fixtureStream.id,
   ];
-  async function workflow(args) {
+  async function workflow(args, input) {
     const child = spawn(helper, args, {
       cwd: tmpdir(),
-      env: { PATH: '/usr/bin:/bin', NODE_OPTIONS: '--invalid-inherited-option' },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        PATH: '/usr/bin:/bin',
+        NODE_OPTIONS: '--invalid-inherited-option',
+        WORK_INBOX_SYNC_HOME: join(temporary, 'private-sync'),
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
+    child.stdin.end(input === undefined ? '' : JSON.stringify(input));
     let output = '',
       error = '';
     child.stdout.on('data', (x) => (output += x));
@@ -243,13 +248,52 @@ try {
   assert(context.includes(fixtureStream.outcome));
   assert(!context.includes(originalCredential.token));
   assert(JSON.parse(await workflow(['check', ...workflowArgs])).current);
+  assert.equal(hookSettings.hooks.Stop.length, 1);
+  const binding = join(project, '.work-inbox/claude-code.json');
+  const session = { session_id: 'packaged-native-session' };
+  const startHook = JSON.parse(
+    await workflow(['hook', '--binding', binding], {
+      ...session,
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+    }),
+  );
+  assert(startHook.hookSpecificOutput.additionalContext.includes(fixtureStream.outcome));
+  const missingCheckpoint = JSON.parse(
+    await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
+  );
+  assert.equal(missingCheckpoint.decision, 'block');
+  const checkpointFile = join(temporary, 'checkpoint.json');
+  writeFileSync(
+    checkpointFile,
+    JSON.stringify({ summary: 'Packaged lifecycle checkpoint verified; no execution started.' }),
+    { mode: 0o600 },
+  );
+  const checkpoint = JSON.parse(
+    await workflow([
+      'checkpoint',
+      '--binding',
+      binding,
+      '--input',
+      checkpointFile,
+      '--session-id',
+      session.session_id,
+    ]),
+  );
+  assert(checkpoint.recorded);
+  assert.deepEqual(
+    JSON.parse(
+      await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
+    ),
+    {},
+  );
   await workflow(['remove', ...workflowArgs]);
   assert.equal(
     readFileSync(join(project, 'CLAUDE.md'), 'utf8'),
     '# Existing project instructions\n',
   );
   console.log(
-    'PASS: packaged workflow setup/check/context/remove with preserved guidance and no external Node.',
+    'PASS: packaged workflow setup/check/context, lifecycle/checkpoint/recovery and removal with preserved guidance and no external Node.',
   );
 
   const duplicate = start(app);

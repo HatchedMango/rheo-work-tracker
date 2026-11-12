@@ -105,7 +105,7 @@ test('externally submitted work, context edits, notes, and manual completion', a
     page.locator('.timeline').getByText('A useful decision to keep.', { exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Mark complete', exact: true }).click();
-  await expect(page.locator('.detail-meta .badge')).toHaveText('completed');
+  await expect(page.locator('.detail-meta .badge')).toHaveText('Completed');
   await page.getByText('Context changes', { exact: true }).click();
   await expect(page.locator('.context-changes').getByText('Before', { exact: true })).toBeVisible();
   await expect(page.locator('.context-changes').getByText('After', { exact: true })).toBeVisible();
@@ -143,6 +143,7 @@ test('queued work waits offline, actual worker posts a result, and review requir
       timeout: 20000,
     });
     await expect(page.getByText('SIMULATED REPORT', { exact: false })).toBeVisible();
+    await expect(page.locator('.sidebar-note')).toContainText('Execution worker connected');
     await page.screenshot({ path: 'test-results/desktop-review.png', fullPage: true });
     await page
       .getByLabel('Changes needed')
@@ -155,7 +156,7 @@ test('queued work waits offline, actual worker posts a result, and review requir
       timeout: 20000,
     });
     await page.getByRole('button', { name: 'Approve result & complete', exact: true }).click();
-    await expect(page.locator('.detail-meta .badge')).toHaveText('completed');
+    await expect(page.locator('.detail-meta .badge')).toHaveText('Completed');
   } finally {
     worker.kill('SIGTERM');
     await new Promise<void>((r) => {
@@ -189,7 +190,7 @@ test('legacy backlog submissions reach Inbox; mobile search and human decline st
     page.getByRole('heading', { name: 'Refactor date picker later', exact: true }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Decline', exact: true }).click();
-  await expect(page.locator('.detail-meta .badge')).toHaveText('declined');
+  await expect(page.locator('.detail-meta .badge')).toHaveText('Declined');
   await page.screenshot({ path: 'test-results/mobile-work.png', fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -418,7 +419,13 @@ test('guided agent setup checks locally, verifies an actual MCP tool call, and d
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const agent = new Client({ name: 'browser-onboarding-agent', version: '1.0' });
   try {
-    await agent.connect(new StdioClientTransport({ ...setup.launch, stderr: 'pipe' }));
+    await agent.connect(
+      new StdioClientTransport({
+        ...setup.launch,
+        env: { ...setup.launch.env, WORK_INBOX_SYNC_HOME: resolve('.data/e2e/sync') },
+        stderr: 'pipe',
+      }),
+    );
     const result = await agent.callTool({ name: 'list_work', arguments: { limit: 1 } });
     expect(result.isError).not.toBe(true);
     await expect(dialog.getByText('Verified', { exact: true })).toBeVisible();
@@ -427,11 +434,92 @@ test('guided agent setup checks locally, verifies an actual MCP tool call, and d
     await dialog.getByRole('button', { name: 'Finish connection', exact: true }).click();
     const row = page.getByRole('listitem').filter({ hasText: 'Browser setup agent' });
     await expect(row.getByText('Verified', { exact: true })).toBeVisible();
+    await expect(row.getByText('No progress checkpoint recorded.')).toBeVisible();
+    await row.getByLabel('Sync decisions from my chats').check();
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await agent.callTool({ name, arguments: args });
+      expect(result.isError).not.toBe(true);
+      return JSON.parse((result.content as { text: string }[])[0].text);
+    };
+    const tracked = await call('submit_stream', {
+      title: 'Chat-synchronized outcome',
+      outcome: 'A plan and human feedback stay current',
+      idempotencyKey: randomUUID(),
+    });
+    const question = await call('record_context', {
+      streamId: tracked.id,
+      kind: 'question',
+      body: 'Which API should this use?',
+      needsHuman: true,
+      idempotencyKey: randomUUID(),
+    });
+    const identity = {
+      sessionId: randomUUID(),
+      client: 'codex',
+      project: resolve('.data/e2e'),
+      streamId: tracked.id,
+      turnId: randomUUID(),
+    };
+    expect(
+      (
+        await call('sync_work', {
+          ...identity,
+          eventId: randomUUID(),
+          event: 'start',
+          occurredAt: Date.now(),
+        })
+      ).recorded,
+    ).toBe(true);
+    await expect(row.getByText(/Latest chat turn needs an update/)).toBeVisible();
+    const checkpoint = await call('sync_work', {
+      ...identity,
+      eventId: randomUUID(),
+      event: 'checkpoint',
+      occurredAt: Date.now(),
+      checkpoint: {
+        summary: 'Plan approved and API choice recorded in chat',
+        feedback: [
+          {
+            kind: 'stream_decision',
+            id: tracked.id,
+            revision: tracked.revision,
+            action: 'accept',
+            response: 'Use this plan',
+          },
+          {
+            kind: 'question',
+            id: question.id,
+            revision: question.revision,
+            answer: 'Use the sandbox API',
+          },
+        ],
+      },
+    });
+    expect(checkpoint.recorded).toBe(true);
+    await expect(row.getByText(/Last progress checkpoint/)).toBeVisible();
+    await expect(row.getByText(/Latest chat turn needs an update/)).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
     await page.screenshot({ path: 'test-results/mobile-connections.png', fullPage: true });
+    await page.goto(`/?view=streams&stream=${tracked.id}`);
+    await expect(page.getByText(/Progress recorded/)).toBeVisible();
+    await expect(
+      page.locator('.request-card').filter({ hasText: 'Which API should this use?' }),
+    ).toHaveCount(0);
+    await page.getByText(/Progress recorded/).click();
+    await expect(
+      page.getByText('Plan approved and API choice recorded in chat', { exact: true }).first(),
+    ).toBeVisible();
+    await page.screenshot({ path: 'test-results/sync-stream-mobile.png', fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page
+      .getByRole('navigation', { name: 'Primary' })
+      .getByRole('button', { name: 'Connections', exact: true })
+      .click();
     await row.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await expect(row.getByText('Disconnected', { exact: true })).toBeVisible();
     expect((await agent.callTool({ name: 'list_work', arguments: {} })).isError).toBe(true);
@@ -733,6 +821,8 @@ test('approved streams stay quiet while a human request shows its unlock and a p
       scopeIntent: 'within_scope',
     });
   expect(w.assignment.state).toBe('covered');
+  await page.goto(`/?view=active&work=${w.id}`);
+  await expect(page.locator('.detail-meta .badge')).toHaveText('Stream coverage');
   await post(`/work/${parallel.id}/tracking`, { revision: 1, progress: 'working' });
   const h = await post('/human-actions', {
     streamId: root.id,
@@ -767,6 +857,7 @@ test('approved streams stay quiet while a human request shows its unlock and a p
   await expect(request).toContainText(root.title);
   await expect(request).toContainText(a.title);
   await expect(page.locator('.request-card').filter({ hasText: parallel.title })).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/visual-human-request.png', fullPage: true });
   await request.getByRole('button', { name: 'Respond', exact: true }).click();
   await request
     .getByLabel('Response', { exact: true })
@@ -799,7 +890,7 @@ test('approved streams stay quiet while a human request shows its unlock and a p
   await expect(
     page
       .getByRole('region', { name: 'Work detail' })
-      .getByText('delivered', { exact: true })
+      .getByText('Delivered', { exact: true })
       .first(),
   ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

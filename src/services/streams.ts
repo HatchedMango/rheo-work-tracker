@@ -16,6 +16,8 @@ import {
 } from './coverage.js';
 import { flowDependencies, flowFingerprint, syncLegacyEdges } from './flow.js';
 import { readTracking } from './stream-data.js';
+import { allowFeedback } from './feedback.js';
+import type { FeedbackOrigin } from '../shared/sync.js';
 
 // Budget the serialized string, including JSON escapes, without splitting code points.
 const clip = (value: string, bytes: number) => {
@@ -210,9 +212,27 @@ export class StreamService {
       return this.get(a, id);
     });
   }
-  action(a: Actor, id: string, input: z.input<typeof c.streamActionSchema>) {
-    this.allow(a, ['owner']);
+  action(
+    a: Actor,
+    id: string,
+    input: z.input<typeof c.streamActionSchema>,
+    source?: FeedbackOrigin,
+  ) {
+    allowFeedback(this.work.store, a, source);
     const p = c.streamActionSchema.parse(input);
+    if (source)
+      ensure(
+        [
+          'accept',
+          'decline',
+          'accept_scope',
+          'reject_scope',
+          'enable_coverage',
+          'keep_open',
+        ].includes(p.action),
+        403,
+        'Chat feedback cannot perform this action.',
+      );
     return this.tx(() => {
       const s = this.get(a, id);
       ensure(
@@ -281,9 +301,16 @@ export class StreamService {
       this.raw
         .prepare('UPDATE streams SET revision=revision+1,updatedAt=? WHERE id=?')
         .run(this.now(), id);
-      this.event(a, id, p.action, `Human decision: ${p.action.replaceAll('_', ' ')}.`, {
-        scope: s.pendingScope,
-      });
+      this.event(
+        a,
+        id,
+        source ? 'relayed_' + p.action : p.action,
+        `${source ? 'Reported from ' + source.client : 'Human decision'}: ${p.action.replaceAll('_', ' ')}.`,
+        {
+          scope: s.pendingScope,
+          ...(source ? { source } : {}),
+        },
+      );
       return this.get(a, id);
     });
   }

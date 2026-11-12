@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { apiClient, readCredential } from '../shared/client.js';
 import { bindingSchema, workflowSetup } from './setup.js';
 import { WORKFLOW_VERSION } from '../shared/streams.js';
+import { runHook, saveCheckpoint, checkpointFile, selectWork } from './hooks.js';
+import { SyncOutbox } from './outbox.js';
 export async function runWorkflow(argv: string[]) {
   const [command, ...args] = argv,
     flags: Record<string, string> = {};
@@ -17,6 +19,78 @@ export async function runWorkflow(argv: string[]) {
     )
       throw new Error('Use --option value pairs.');
     flags[args[i].slice(2)] = args[i + 1];
+  }
+  if (command === 'hook') {
+    const f = z
+      .object({ binding: z.string().min(1) })
+      .strict()
+      .parse(flags);
+    let input = '';
+    for await (const chunk of process.stdin) {
+      input += String(chunk);
+      if (Buffer.byteLength(input) > 65536) throw new Error('Hook input is too large.');
+    }
+    return JSON.stringify(await runHook(f.binding, JSON.parse(input)));
+  }
+  if (command === 'checkpoint') {
+    const f = z
+      .object({
+        binding: z.string().min(1),
+        input: z.string().min(1),
+        'session-id': z.string().min(1).optional(),
+      })
+      .strict()
+      .parse(flags);
+    const result = f['session-id']
+      ? await saveCheckpoint(f.binding, f.input, f['session-id'])
+      : await checkpointFile(f.binding, f.input);
+    return JSON.stringify({
+      recorded: result.pending === 0 && !result.conflicts.length && !result.busy,
+      pending: result.pending,
+      conflicts: result.conflicts,
+    });
+  }
+  if (command === 'select') {
+    const f = z
+      .object({
+        binding: z.string().min(1),
+        'session-id': z.string().min(1).max(200),
+        'stream-id': z.uuid().optional(),
+        'change-id': z.uuid().optional(),
+      })
+      .strict()
+      .parse(flags);
+    return JSON.stringify(
+      await selectWork(f.binding, f['session-id'], {
+        streamId: f['stream-id'],
+        changeId: f['change-id'],
+      }),
+    );
+  }
+  if (command === 'retry' || command === 'outbox') {
+    const f = z
+      .object({ binding: z.string().min(1) })
+      .strict()
+      .parse(flags);
+    const b = bindingSchema.parse(JSON.parse(readFileSync(f.binding, 'utf8')));
+    const outbox = new SyncOutbox(b.credentialFile, b.project, b.client);
+    if (command === 'retry') {
+      const result = await outbox.flush();
+      return JSON.stringify({
+        recorded: !result.pending && !result.conflicts.length && !result.busy,
+        pending: result.pending,
+        conflicts: result.conflicts,
+      });
+    }
+    return JSON.stringify({
+      directory: outbox.directory,
+      pending: outbox
+        .pending()
+        .map((e) => ({ eventId: e.eventId, event: e.event, sessionId: e.sessionId })),
+      conflicts: outbox
+        .conflicts()
+        .map((e) => ({ eventId: e.eventId, event: e.event, sessionId: e.sessionId })),
+    });
   }
   if (command === 'context') {
     const { binding: bindingPath } = z

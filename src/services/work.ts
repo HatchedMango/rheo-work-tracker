@@ -17,6 +17,8 @@ import { OversightService } from './oversight.js';
 import { StreamService } from './streams.js';
 import { routineCoverage } from './coverage.js';
 import { readTracking } from './stream-data.js';
+import { allowFeedback } from './feedback.js';
+import type { FeedbackOrigin } from '../shared/sync.js';
 const active = ['queued', 'claimed', 'running', 'awaiting_review'];
 export class WorkService {
   constructor(
@@ -338,8 +340,8 @@ export class WorkService {
       return this.get(a, id);
     });
   }
-  editable(a: Actor, id: string, revision: number) {
-    this.allow(a, ['owner']);
+  editable(a: Actor, id: string, revision: number, source?: FeedbackOrigin) {
+    allowFeedback(this.store, a, source);
     const w = this.row(a, id);
     ensure(w.revision === revision, 409, 'This item changed. Refresh and try again.');
     ensure(w.lifecycle === 'open', 409, 'This work is no longer open.');
@@ -396,9 +398,15 @@ export class WorkService {
       .where(and(eq(s.runs.workId, id), inArray(s.runs.state, active)))
       .get();
   }
-  action(a: Actor, id: string, input: Action) {
+  action(a: Actor, id: string, input: Action, source?: FeedbackOrigin) {
     return this.tx(() => {
-      const w = this.editable(a, id, input.revision);
+      if (source)
+        ensure(
+          ['accept', 'decline'].includes(input.action),
+          403,
+          'Chat feedback cannot perform this action.',
+        );
+      const w = this.editable(a, id, input.revision, source);
       const assignment = this.db
         .select()
         .from(s.assignments)
@@ -430,7 +438,7 @@ export class WorkService {
             input.action === 'accept'
               ? 'You accepted responsibility. Execution still requires approval.'
               : 'Assignment declined; work remains in the backlog.';
-          this.bump(w, { ownerId: input.action === 'accept' ? a.id : null });
+          this.bump(w, { ownerId: input.action === 'accept' ? a.ownerId : null });
           break;
         }
         case 'run': {
@@ -558,7 +566,14 @@ export class WorkService {
           message = 'Failure acknowledged. Work remains open; another attempt needs approval.';
           break;
       }
-      this.event(id, a, type, message);
+      this.event(
+        id,
+        a,
+        source ? 'relayed_' + type : type,
+        source ? `Reported from ${source.client}: ${input.message}` : message,
+        [],
+        source ? { source, decision: input.action } : {},
+      );
       return this.get(a, id);
     });
   }

@@ -27,6 +27,7 @@ export const bindingSchema = z.object({
   files: z.array(z.object({ path: z.string(), hash: z.string() })),
   blockHash: z.string(),
   hook: z.unknown().optional(),
+  hooks: z.array(z.object({ event: z.string(), entry: z.unknown() })).optional(),
 });
 export type Binding = z.infer<typeof bindingSchema>;
 export type SetupOptions = {
@@ -110,7 +111,7 @@ function section(text: string, client: string) {
 }
 function block(o: SetupOptions) {
   const m = markers(o.client);
-  return `${m.start}\n## Work Inbox\n\nUse the work-inbox skill for work tracked through ${o.serverName}. Load get_workflow and get_stream_context with the explicitly selected stream/change at session start, resume, and after compaction before continuing. Read .work-inbox/${o.client}.json for the explicit streamId/changeId binding, if present. This local manifest contains paths and selection only; never read or print the credential file it references. If there is no selection, ask; never infer one from a repository path. Keep decisions, dependencies, uncertainty, progress, and output evidence current. Claim accepted work cooperatively, release at handoff, and leave a concise durable handoff. Work Inbox grants no execution or Git authority. If unavailable, report the failure; do not treat an empty result as fresh context.\n\nWorkflow version: ${WORKFLOW_VERSION}. ${o.client === 'claude-code' ? 'The local SessionStart helper supplies fresh context before MCP becomes available.' : 'This project fallback uses explicit context retrieval; it does not promise automatic lifecycle hooks.'}\n${m.end}`;
+  return `${m.start}\n## Work Inbox\n\nUse the work-inbox skill for work tracked through ${o.serverName}. Load get_workflow and get_stream_context with the explicitly selected stream/change at session start, resume, and after compaction before continuing. Read .work-inbox/${o.client}.json for the explicit streamId/changeId binding, if present. This local manifest contains paths and selection only; never read or print the credential file it references. If there is no selection, ask; never infer one from a repository path. Keep decisions, dependencies, uncertainty, progress, and output evidence current. Claim accepted work cooperatively, release at handoff, and leave a concise durable handoff. Work Inbox grants no execution or Git authority. If unavailable, report the failure; do not treat an empty result as fresh context.\n\nWorkflow version: ${WORKFLOW_VERSION}. Project lifecycle helpers load explicit context and check for saved checkpoints. Review/trust hooks in the client; installed hooks are not proof they have run.\n${m.end}`;
 }
 export function skill() {
   return `---\nname: work-inbox\ndescription: Use when work is tracked in Work Inbox to recover current context, coordinate changes, and preserve decisions and handoffs.\n---\n\n# Work Inbox\n\n${workflowInstructions}\n\nCall get_workflow for current guidance. get_stream_context accepts streamId or changeId and bounded pagination. Use returned IDs to retrieve full change details and follow each collection cursor. Never invent a binding or choose work on the app's behalf.\n`;
@@ -157,38 +158,45 @@ function assets(o: SetupOptions) {
   }
   return files;
 }
-function settings(project: string) {
-  const path = safePath(project, '.claude/settings.local.json'),
+function settings(project: string, client: SetupOptions['client']) {
+  const path = safePath(
+      project,
+      client === 'codex' ? '.codex/hooks.json' : '.claude/settings.local.json',
+    ),
     text = read(path);
   let value: Record<string, unknown>;
   try {
     value = text ? JSON.parse(text) : {};
     if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error();
   } catch {
-    throw new Error('Claude settings are not a JSON object; no changes made.');
+    throw new Error('Client hook settings are not a JSON object; no changes made.');
   }
+  if (
+    value.hooks !== undefined &&
+    (!value.hooks || typeof value.hooks !== 'object' || Array.isArray(value.hooks))
+  )
+    throw new Error('Client hooks must be an object.');
   return { path, value };
 }
-function hookEntries(value: Record<string, unknown>) {
-  const hooks = value.hooks as Record<string, unknown> | undefined;
-  if (hooks !== undefined && (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)))
-    throw new Error('Claude hooks must be an object.');
-  const entries = hooks?.SessionStart;
-  if (entries !== undefined && !Array.isArray(entries))
-    throw new Error('Claude SessionStart hooks must be an array.');
-  return (entries ?? []) as unknown[];
-}
-function hook(o: SetupOptions, bindingPath: string) {
-  return {
-    matcher: 'startup|resume|clear|compact|fork',
-    hooks: [
-      {
-        type: 'command',
-        command: `${o.helperNode ? shellQuote(o.helperNode) + ' ' : ''}${shellQuote(o.helper)} context --binding ${shellQuote(bindingPath)}`,
-        timeout: 5,
-      },
-    ],
-  };
+function managedHooks(o: SetupOptions, bindingPath: string) {
+  return [
+    'SessionStart',
+    'UserPromptSubmit',
+    'Stop',
+    ...(o.client === 'codex' ? ['Interrupt'] : []),
+  ].map((event) => ({
+    event,
+    entry: {
+      ...(event === 'SessionStart' ? { matcher: 'startup|resume|clear|compact|fork' } : {}),
+      hooks: [
+        {
+          type: 'command',
+          command: `${o.helperNode ? shellQuote(o.helperNode) + ' ' : ''}${shellQuote(o.helper)} hook --binding ${shellQuote(bindingPath)}`,
+          timeout: 8,
+        },
+      ],
+    },
+  }));
 }
 export function workflowSetup(
   operation: 'preview' | 'install' | 'check' | 'remove',
@@ -220,14 +228,27 @@ export function workflowSetup(
     if (existsSync(path) && (!owned || hash(existing) !== owned.hash))
       conflicts.push(`${f.path} was edited or already exists outside this setup.`);
   }
-  const cfg = o.client === 'claude-code' ? settings(project) : null;
-  const entries = cfg ? hookEntries(cfg.value) : [];
-  const oldIndex = old?.hook
-    ? entries.findIndex((x) => JSON.stringify(x) === JSON.stringify(old.hook))
-    : -1;
-  if (old?.hook && oldIndex === -1)
-    conflicts.push('The managed Claude SessionStart hook was changed or removed.');
-  const desiredHook = o.client === 'claude-code' ? hook(o, manifestPath) : undefined;
+  const cfg = settings(project, o.client);
+  const hooks = (cfg.value.hooks ?? {}) as Record<string, unknown>;
+  const ownedHooks = old?.hooks ?? (old?.hook ? [{ event: 'SessionStart', entry: old.hook }] : []);
+  const desiredHooks = managedHooks(o, manifestPath);
+  for (const event of new Set([...ownedHooks, ...desiredHooks].map((h) => h.event))) {
+    if (hooks[event] !== undefined && !Array.isArray(hooks[event]))
+      throw new Error(`Client ${event} hooks must be an array.`);
+  }
+  for (const owned of ownedHooks) {
+    if (
+      !((hooks[owned.event] as unknown[]) ?? []).some(
+        (x) => JSON.stringify(x) === JSON.stringify(owned.entry),
+      )
+    )
+      conflicts.push(`The managed ${owned.event} hook was changed or removed.`);
+  }
+  const mergedHooks = { ...hooks };
+  for (const owned of ownedHooks)
+    mergedHooks[owned.event] = ((mergedHooks[owned.event] as unknown[]) ?? []).filter(
+      (x) => JSON.stringify(x) !== JSON.stringify(owned.entry),
+    );
   const missing = files.filter((f) => !existsSync(safePath(project, f.path))).map((f) => f.path);
   if (!current) missing.push(instructionFile(o.client));
   const stale =
@@ -240,7 +261,8 @@ export function workflowSetup(
     old.helperNode !== o.helperNode ||
     old.serverName !== o.serverName ||
     old.streamId !== o.streamId ||
-    old.changeId !== o.changeId;
+    old.changeId !== o.changeId ||
+    JSON.stringify(old.hooks) !== JSON.stringify(desiredHooks);
   const report = {
     version: WORKFLOW_VERSION,
     project,
@@ -252,13 +274,11 @@ export function workflowSetup(
     files: [
       instructionFile(o.client),
       ...files.map((f) => f.path),
-      ...(cfg ? ['.claude/settings.local.json'] : []),
+      relative(project, cfg.path),
       relative(project, manifestPath),
     ],
-    hook:
-      o.client === 'claude-code'
-        ? 'SessionStart startup/resume/clear/compact'
-        : 'Explicit context retrieval; no automatic hook',
+    hook: 'SessionStart, UserPromptSubmit, Stop' + (o.client === 'codex' ? ', Interrupt' : ''),
+    hooksTrusted: false,
     connectionVerified: false,
     workflowVerified: false,
   };
@@ -278,11 +298,14 @@ export function workflowSetup(
       if (current.end === doc.length) next = next.replace(/\n\n$/, '');
       mutations.set(docPath, next || null);
     }
-    if (cfg && oldIndex >= 0) {
-      const hooks = cfg.value.hooks as Record<string, unknown>;
-      hooks.SessionStart = entries.filter((_, i) => i !== oldIndex);
-      mutations.set(cfg.path, JSON.stringify(cfg.value, null, 2) + '\n');
-    }
+    for (const owned of ownedHooks)
+      if ((mergedHooks[owned.event] as unknown[]).length === 0) delete mergedHooks[owned.event];
+    cfg.value.hooks = mergedHooks;
+    if (!Object.keys(mergedHooks).length) delete cfg.value.hooks;
+    mutations.set(
+      cfg.path,
+      Object.keys(cfg.value).length ? JSON.stringify(cfg.value, null, 2) + '\n' : null,
+    );
     for (const f of old.files) mutations.set(safePath(project, f.path), null);
     mutations.set(manifestPath, null);
     apply(mutations);
@@ -303,17 +326,18 @@ export function workflowSetup(
     changeId: o.changeId,
     files: files.map((f) => ({ path: f.path, hash: hash(f.content) })),
     blockHash: hash(desired),
-    hook: desiredHook,
+    hooks: desiredHooks,
   };
   // The manifest contains paths/selection only. Credential bytes never enter project files.
   mutations.set(docPath, nextDoc);
   for (const f of files) mutations.set(safePath(project, f.path), f.content);
-  if (cfg) {
-    const hooks = (cfg.value.hooks ?? {}) as Record<string, unknown>;
-    hooks.SessionStart = [...entries.filter((_, i) => i !== oldIndex), desiredHook];
-    cfg.value.hooks = hooks;
-    mutations.set(cfg.path, JSON.stringify(cfg.value, null, 2) + '\n');
-  }
+  for (const desired of desiredHooks)
+    mergedHooks[desired.event] = [
+      ...((mergedHooks[desired.event] as unknown[]) ?? []),
+      desired.entry,
+    ];
+  cfg.value.hooks = mergedHooks;
+  mutations.set(cfg.path, JSON.stringify(cfg.value, null, 2) + '\n');
   mutations.set(manifestPath, JSON.stringify(binding, null, 2) + '\n');
   apply(mutations);
   return { ...report, installed: true, current: true, missing: [] };

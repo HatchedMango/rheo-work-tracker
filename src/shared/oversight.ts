@@ -103,6 +103,7 @@ export type HumanAction = {
   state: 'open' | 'in_progress' | 'done' | 'cancelled';
   response: string;
   respondedBy: string | null;
+  responseSource: string | null;
   revision: number;
   createdAt: number;
   updatedAt: number;

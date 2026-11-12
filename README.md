@@ -130,6 +130,8 @@ Local state is excluded from Git and initialized with restrictive directory/data
 
 This is a single-owner, loopback-only release, not a multi-tenant or publicly deployable service. It has workspace/visibility fields for future evolution but no team access model, HTTPS hosting, external accounts, repository permissions, or production operations. Do not expose its port through a public proxy.
 
+Workflow synchronization, lifecycle hook setup, chat response permissions and pending-write recovery are documented in [synchronization](docs/synchronization.md).
+
 ## Development and checks
 
 ```sh

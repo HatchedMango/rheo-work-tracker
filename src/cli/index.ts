@@ -7,6 +7,10 @@ import { credentials, actors } from '../db/schema.js';
 import { Auth } from '../services/auth.js';
 import { WorkService } from '../services/work.js';
 import { createSchema } from '../shared/contracts.js';
+import { StreamService } from '../services/streams.js';
+import { OversightService } from '../services/oversight.js';
+import { SyncService } from '../services/sync.js';
+import { z } from 'zod';
 const store = openStore(join(dataDir, 'work.sqlite'));
 const auth = new Auth(store);
 const command = process.argv[2];
@@ -33,6 +37,22 @@ try {
     chmodSync(path, 0o600);
     console.log(
       `${command} registered: ${name}\nCredential file: ${path}\nCredential ID: ${c.id}\nRevoke with: npm run revoke -- ${c.id}\nStart with: npm run --silent mcp\nIf this replaces a previous credential file, revoke its old credential using npm run credentials.`,
+    );
+  } else if (command === 'sync-feedback') {
+    const connectionId = z.uuid().parse(process.argv[3]),
+      enabled = z.enum(['on', 'off']).parse(process.argv[4]);
+    const row = store.raw
+      .prepare('SELECT credentialId FROM agent_connections WHERE id=?')
+      .get(connectionId) as { credentialId: string } | undefined;
+    if (!row) throw new Error('Connection not found.');
+    const sync = new SyncService(new OversightService(new StreamService(new WorkService(store))));
+    sync.permission(
+      { id: 'owner', scope: 'owner', ownerId: 'owner' },
+      row.credentialId,
+      enabled === 'on',
+    );
+    console.log(
+      `Chat feedback synchronization ${enabled === 'on' ? 'enabled' : 'disabled'} for this connection.`,
     );
   } else if (command === 'credentials') {
     const rows = store.db
