@@ -1,6 +1,6 @@
 # Planning, decisions, and conversation continuity
 
-Status: proposed broader implementation plan, November 11, 2026. The user has authorized the synchronization improvements; that subset is being implemented as described in [synchronization.md](synchronization.md). Immutable plan versions and the broader attention/navigation redesign are not yet implemented. This document refines the approval and interaction rules in `stream-oversight-implementation-plan.md`. Existing stream composition, typed prerequisites, output reporting, and visual design remain the foundation.
+Status: remaining work planned and parked as of November 12, 2026; no implementation is underway. The synchronization subset was delivered in 0.3.2, committed in f493782, and retained in installed 0.3.3; see [synchronization.md](synchronization.md). Immutable plan versions and the broader attention/navigation redesign remain unimplemented. The user has also agreed to agent-owned routine closeout and quiet parking on focus changes; that direction is recorded below, without treating discussion agreement as implementation approval. This document refines `stream-oversight-implementation-plan.md`; existing composition, prerequisites, output reporting and visual design remain the foundation.
 
 ## Product behavior
 
@@ -20,6 +20,14 @@ Every piece of work has an approach before implementation. Planning depth varies
 For a small fix, a sufficient plan might be: “The filter is omitted when returning from detail. Preserve it in the URL; check back navigation and reload.” A separate document, research phase, or approval form would add no value here.
 
 For substantial work, the plan includes outcome, approach, boundaries, proposed outputs/substreams, sequencing and independent branches, uncertainties, human prerequisites, and verification. Full detail can remain in the repository or another existing document; Work Inbox stores the concise summary and an identifiable revision/reference.
+
+## Closeout and focus changes
+
+Agents maintain routine closeout without requiring the human to announce they are done. Report delivery when implementation and the required verification support it; preserve evidence and remaining limitations. Delivery remains separate from human acceptance and stream outcome completion.
+
+When focus moves, reconcile the previous work: report delivery if justified, park unfinished work with a concise handoff if it is no longer being pursued, retain actual prerequisite blockers, and leave a human request only for a specific consequential decision. A topic switch or silence does not establish approval or completion. Required checks remain gates; future improvements and additional validation must not silently broaden the original change forever.
+
+The current app has no parked state: for the manual project cleanup, planned progress plus an explicit parked handoff retains unfinished work without claiming implementation is in progress. Planned work still appears in Active and proposed work can still appear in Needs you. A future implementation must distinguish parked/planned work from current activity and defer its attention without accepting or declining it.
 
 ## End-to-end flow
 

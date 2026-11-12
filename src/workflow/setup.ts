@@ -179,6 +179,12 @@ function settings(project: string, client: SetupOptions['client']) {
   return { path, value };
 }
 function managedHooks(o: SetupOptions, bindingPath: string) {
+  const labels: Record<string, string> = {
+    SessionStart: 'Work Inbox: Load work context',
+    UserPromptSubmit: 'Work Inbox: Refresh context before a prompt',
+    Stop: 'Work Inbox: Check progress is saved',
+    Interrupt: 'Work Inbox: Record interruption',
+  };
   return [
     'SessionStart',
     'UserPromptSubmit',
@@ -191,6 +197,7 @@ function managedHooks(o: SetupOptions, bindingPath: string) {
       hooks: [
         {
           type: 'command',
+          statusMessage: labels[event],
           command: `${o.helperNode ? shellQuote(o.helperNode) + ' ' : ''}${shellQuote(o.helper)} hook --binding ${shellQuote(bindingPath)}`,
           timeout: 8,
         },

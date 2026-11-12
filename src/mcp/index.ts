@@ -14,7 +14,7 @@ const request = apiClient(
   { diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1' },
 );
 const server = new McpServer(
-  { name: 'work-inbox', version: '0.3.2' },
+  { name: 'work-inbox', version: '0.3.3' },
   { instructions: c.workflowInstructions },
 );
 async function report(activity: { kind: string; tool?: string }) {
