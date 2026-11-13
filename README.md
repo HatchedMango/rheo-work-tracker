@@ -101,7 +101,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Tests use isolated data and ports; they do not seed the personal inbox. Keep traces/logs private because temporary session data may appear in failure diagnostics. To audit secret content, install Gitleaks and run `gitleaks git --redact=100 --log-opts=--all .`; the repository path check complements that scan rather than replacing it.
+`npm test` builds the MCP entry before integration checks, including on a fresh checkout. Tests use isolated data and ports; they do not seed the personal inbox. Keep traces/logs private because temporary session data may appear in failure diagnostics. To audit secret content, install Gitleaks and run `gitleaks git --redact=100 --log-opts=--all .`; the repository path check complements that scan rather than replacing it.
 
 GitHub **Checks** runs source checks and browser tests. **Mac trial package** is manually dispatched and verifies an Apple Silicon package before retaining installer files, checksums and build metadata as private workflow artifacts. Neither workflow publishes a release automatically. See [publishing steps](docs/publish-private-trial.md), [private release preparation](docs/private-mac-trial-plan.md) and the [trial guide](docs/second-mac-trial.md).
 
