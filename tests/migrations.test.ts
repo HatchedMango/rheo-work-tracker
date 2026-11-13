@@ -33,6 +33,11 @@ it('recovers legacy undecided intake once while preserving decisions, closed wor
     action(completed.id, 'accept');
     action(completed.id, 'complete');
     action(cancelled.id, 'cancel');
+    store.raw
+      .prepare("UPDATE assignments SET state='proposed' WHERE workId IN (?,?,?,?)")
+      .run(bypassed.id, blocked.id, existingInbox.id, resolved.id);
+    service.notify(existingInbox.id, 'assignment');
+    service.notify(resolved.id, 'assignment');
     // Recreate the old storage state without rewriting append-only event history.
     store.raw.prepare('DELETE FROM attention WHERE workId = ?').run(bypassed.id);
     store.raw.prepare('DELETE FROM attention WHERE workId = ?').run(blocked.id);
@@ -51,21 +56,25 @@ it('recovers legacy undecided intake once while preserving decisions, closed wor
         .list(owner, listSchema.parse({ view: 'inbox' }))
         .items.map((w) => w.id)
         .sort(),
-    ).toEqual([bypassed.id, blocked.id, existingInbox.id].sort());
+    ).toEqual([]);
     for (const w of [bypassed, blocked]) {
       const detail = migrated.get(owner, w.id);
-      expect(detail.attention).toHaveLength(1);
+      expect(detail.attention).toHaveLength(0);
       expect(detail.assignment?.state).toBe('proposed');
       expect(detail.ownerId).toBeNull();
       expect(detail.revision).toBe(2);
       expect(detail.events.filter((e) => e.type === 'assignment_requested')).toHaveLength(1);
-      expect(detail.events[0].actorName).toBe('Work Inbox');
+      // Creation and migration can share a millisecond; inspect provenance of
+      // the migration event without assuming its position among tied events.
+      expect(detail.events.find((e) => e.type === 'assignment_requested')?.actorName).toBe(
+        'Work Inbox',
+      );
     }
     expect(migrated.get(owner, bypassed.id).events).toEqual(expect.arrayContaining(originalEvents));
     for (const detail of untouched) expect(migrated.get(owner, detail.id)).toEqual(detail);
     store.close();
     store = openStore(path);
-    expect(new WorkService(store).get(owner, bypassed.id).attention).toHaveLength(1);
+    expect(new WorkService(store).get(owner, bypassed.id).attention).toHaveLength(0);
     expect(new WorkService(store).get(owner, bypassed.id).events).toHaveLength(
       originalEvents.length + 1,
     );
@@ -94,6 +103,7 @@ it('adds unknown, ungrouped tracking to legacy work without changing IDs, creden
       }),
     );
     service.note(agent, old.id, 'An existing note.', []);
+    store.raw.prepare("UPDATE assignments SET state='proposed' WHERE workId=?").run(old.id);
     const before = service.get(owner, old.id);
     // Recreate the pre-stream schema after capturing real legacy records.
     store.raw.pragma('foreign_keys=OFF');
@@ -116,6 +126,7 @@ it('adds unknown, ungrouped tracking to legacy work without changing IDs, creden
       store.raw.exec(`DROP TABLE ${table}`);
     store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0005_streams.sql');
     store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0006_oversight.sql');
+    store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0008_simple_tracking.sql');
     store.close();
     store = openStore(path);
     const after = new WorkService(store).get(owner, old.id);
@@ -186,6 +197,64 @@ it('upgrades a real v5 schema preserving legacy rows and credentials without inv
   } finally {
     if (raw.open) raw.close();
     migrated?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('preserves every existing column and historical decision when adding simple tracking and chat links', () => {
+  const owner: Actor = { id: 'owner', scope: 'owner', ownerId: 'owner' };
+  const dir = mkdtempSync(join(tmpdir(), 'work-inbox-tracking-migration-')),
+    path = join(dir, 'work.sqlite');
+  let store = openStore(path);
+  try {
+    const auth = new Auth(store),
+      agent = auth.actor(auth.register('agent', 'Existing agent').secret, 'bearer');
+    const work = new WorkService(store);
+    const rows = ['proposed', 'accepted', 'declined'].map((state) => {
+      const w = work.create(
+        agent,
+        createSchema.parse({ title: state, objective: 'Preserve this decision' }),
+      );
+      store.raw.prepare('UPDATE assignments SET state=? WHERE workId=?').run(state, w.id);
+      return w;
+    });
+    store.raw.exec(
+      'ALTER TABLE stream_context DROP COLUMN conversationUrl; ALTER TABLE human_actions DROP COLUMN conversationUrl',
+    );
+    store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0008_simple_tracking.sql');
+    const names = (
+      store.raw
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='schema_migrations'",
+        )
+        .all() as { name: string }[]
+    ).map((x) => x.name);
+    const snapshots = names.map((name) => ({
+      name,
+      columns: (store.raw.prepare(`PRAGMA table_info("${name}")`).all() as { name: string }[]).map(
+        (c) => c.name,
+      ),
+      rows: store.raw.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all(),
+    }));
+    store.close();
+    store = openStore(path);
+    for (const snapshot of snapshots)
+      expect(
+        store.raw
+          .prepare(
+            `SELECT ${snapshot.columns.map((c) => '"' + c + '"').join(',')} FROM "${snapshot.name}" ORDER BY rowid`,
+          )
+          .all(),
+      ).toEqual(snapshot.rows);
+    expect(store.raw.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(store.raw.prepare('SELECT count(*) n FROM stream_approvals').get()).toEqual({ n: 0 });
+    expect(new WorkService(store).get(owner, rows[0].id).assignment?.state).toBe('proposed');
+    store.close();
+    store = openStore(path);
+    expect(new WorkService(store).get(owner, rows[1].id).assignment?.state).toBe('accepted');
+    expect(new WorkService(store).get(owner, rows[2].id).assignment?.state).toBe('declined');
+  } finally {
+    store.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -59,7 +59,7 @@ it('enforces new HTTP operation scopes and keeps lifecycle decisions out of agen
         streamId: s.id,
       })
     ).json();
-    expect(w.assignment.state).toBe('proposed');
+    expect(w.assignment.state).toBe('tracked');
     expect(
       (await request(`/api/work/${w.id}/tracking`, { revision: 1, lifecycle: 'completed' }))
         .statusCode,
@@ -70,6 +70,19 @@ it('enforces new HTTP operation scopes and keeps lifecycle decisions out of agen
     const context = await app.inject({ url: `/api/context?streamId=${s.id}`, headers: agent });
     expect(context.statusCode).toBe(200);
     expect(context.json().changes.items[0].id).toBe(w.id);
+    const mapUrl = `/api/streams/${s.id}/map`;
+    const map = await app.inject({ url: mapUrl, headers: agent });
+    expect(map.statusCode).toBe(200);
+    expect(map.json().nodes.some((n: { id: string }) => n.id === w.id)).toBe(true);
+    expect((await app.inject({ url: mapUrl, headers: owner })).statusCode).toBe(200);
+    expect((await app.inject({ url: mapUrl, headers: { host } })).statusCode).toBe(401);
+    expect(
+      (await app.inject({ url: mapUrl, headers: { host, authorization: `Bearer ${worker}` } }))
+        .statusCode,
+    ).toBe(403);
+    expect((await app.inject({ url: '/api/streams/invalid/map', headers: agent })).statusCode).toBe(
+      400,
+    );
     auth.revoke(auth.actor(token, 'bearer').credentialId!);
     expect(
       (await app.inject({ url: `/api/context?streamId=${s.id}`, headers: agent })).statusCode,

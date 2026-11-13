@@ -150,7 +150,7 @@ async function verifyMcp(launch, expectedIds) {
         stderr: 'pipe',
       }),
     );
-    const result = await client.callTool({ name: 'list_work', arguments: { view: 'inbox' } });
+    const result = await client.callTool({ name: 'list_work', arguments: { view: 'all' } });
     assert(!result.isError, 'Packaged MCP list_work failed.');
     const listed = JSON.parse(result.content[0].text);
     assert.deepEqual(listed.items.map((w) => w.id).sort(), expectedIds.sort());
@@ -170,7 +170,7 @@ try {
   let native = start(app, desktop, ['--import-data', source]);
   await ready(native);
   const initialPid = status().pid;
-  const response = await fetch(`${origin}/api/work?view=inbox`, {
+  const response = await fetch(`${origin}/api/work?view=all`, {
     headers: { Authorization: `Bearer ${originalCredential.token}` },
   });
   assert.equal(response.status, 200, 'Existing credentials stopped working.');

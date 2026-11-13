@@ -1995,3 +1995,437 @@ button svg {
   width: 16px;
   min-height: 16px;
 }
+
+/* Human-facing summaries lead; operational detail stays available on demand. */
+.brief-content > p {
+  margin: 0;
+  line-height: 1.6;
+}
+.brief-content > button {
+  margin-top: 5px;
+  font-size: 12px;
+}
+.tracking-details > summary,
+.criteria-details > summary,
+.activity-details > summary,
+.stream-management > summary,
+.action-panel > summary,
+.detail-footer > summary,
+.request-impact > summary,
+.output-evidence > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.tracking-details[open] > summary,
+.criteria-details[open] > summary,
+.activity-details[open] > summary {
+  margin-bottom: 16px;
+}
+.stream-management {
+  margin-top: 16px;
+}
+.stream-management[open] .button-row {
+  margin-top: 12px;
+}
+.action-panel:not([open]) {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.action-panel-body {
+  margin-top: 14px;
+}
+.request-impact {
+  margin: 10px 0;
+}
+.request-impact[open] {
+  display: block;
+}
+.request-impact .text-button {
+  display: flex;
+  margin-top: 8px;
+}
+.output-evidence {
+  margin-top: 4px;
+}
+.output-evidence small {
+  display: block;
+  margin-top: 8px;
+}
+.activity-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.work-card .card-bottom {
+  margin-top: 0;
+}
+.work-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding-block: 16px;
+}
+.work-card .card-heading {
+  margin-bottom: 0;
+  min-width: 0;
+}
+.work-card .card-bottom {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.work-card .card-bottom > svg {
+  flex-shrink: 0;
+  color: var(--subtle);
+}
+.workspace.with-detail .work-card {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.workspace.with-detail .work-card .card-bottom {
+  justify-content: flex-start;
+}
+@media (max-width: 600px) {
+  .work-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .work-card .card-bottom {
+    justify-content: flex-start;
+  }
+  .work-card .card-bottom > svg {
+    margin-left: auto;
+  }
+}
+
+/* Stream work is the primary surface; composition groups do not imply dependencies. */
+.stream-work {
+  margin-top: 24px;
+  min-width: 0;
+}
+.stream-work-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+.stream-work-toolbar h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.stream-work-toolbar .tabs {
+  margin: 0;
+}
+.stream-work-toolbar .tabs button {
+  padding: 7px 12px;
+}
+.work-map-caption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 18px;
+}
+.map-incomplete {
+  padding: 12px 14px;
+  background: var(--attention-soft);
+  color: var(--attention);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+.work-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 26px;
+  align-items: start;
+}
+.work-map-groups {
+  position: relative;
+  min-width: 0;
+  padding-left: 22px;
+  padding-top: 10px;
+}
+.mode-list .work-map-groups {
+  padding: 0;
+}
+.work-map-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.work-map-edge {
+  stroke-width: 1.3px;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  stroke: var(--control-line);
+  opacity: 0.55;
+}
+.work-map-edge.selected {
+  stroke: var(--accent);
+  stroke-width: 2px;
+  opacity: 1;
+}
+.work-map-edge.waiting {
+  stroke: var(--attention-line);
+}
+.map-arrow-selected {
+  fill: var(--accent);
+}
+.map-arrow-waiting {
+  fill: var(--attention-line);
+}
+.map-arrow-quiet {
+  fill: var(--control-line);
+}
+.work-map-group {
+  position: relative;
+  padding-bottom: 26px;
+}
+.work-map-group-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 12px;
+  margin-bottom: 12px;
+}
+.work-map-group-heading h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.work-map-group-heading > button {
+  position: relative;
+  max-width: 100%;
+  padding: 3px 0;
+  font-size: 13px;
+  text-align: left;
+  background: var(--canvas);
+}
+.work-map-group-heading > button[aria-pressed='true'] {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.map-parent {
+  font-size: 11px;
+  color: var(--muted);
+}
+.work-map-nodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 26px 24px;
+}
+.work-map-node {
+  appearance: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+}
+.work-map-node:hover {
+  border-color: var(--control-line);
+}
+.work-map-node[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    var(--shadow-card);
+}
+.work-map-node strong {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.work-map-node-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+}
+.work-map-node-meta small {
+  font-size: 11px;
+}
+.work-map-node .badge {
+  font-size: 11px;
+}
+.work-map-node[data-kind='human_action']:not(.is-quiet),
+.work-map-node[data-kind='question']:not(.is-quiet) {
+  background: var(--attention-soft);
+}
+.work-map-node.is-quiet {
+  box-shadow: none;
+  background: var(--canvas);
+}
+.work-map-node.is-quiet .work-map-node-meta {
+  color: var(--muted);
+}
+.work-map-blocker {
+  color: var(--attention);
+  font-size: 11px;
+}
+.work-map-delivered {
+  margin-top: 18px;
+}
+.work-map-delivered > .fine {
+  display: block;
+  margin-bottom: 10px;
+}
+.work-map-delivered .work-map-node {
+  padding: 10px 12px;
+  gap: 6px;
+}
+.work-map-inspector {
+  position: sticky;
+  top: 20px;
+  border-left: 1px solid var(--line);
+  padding-left: 20px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.work-map-inspector h3 {
+  font-size: 17px;
+  margin: 12px 0;
+  line-height: 1.4;
+}
+.work-map-inspector h4 {
+  font-size: 12px;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.work-map-inspector p {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.work-map-inspector .brief-content > p {
+  margin: 0;
+}
+.map-inspector-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.map-selected-update {
+  margin-top: 14px;
+}
+.map-uncertainty {
+  color: var(--muted);
+  margin-top: 14px;
+}
+.map-relation-list {
+  margin-top: 22px;
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
+}
+.map-relation {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+.map-relation small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.map-relation-list .text-button {
+  text-align: left;
+}
+.map-relation p {
+  font-size: 12px;
+}
+.map-open-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+.map-open-actions .secondary {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.mode-list .work-map-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.mode-list .work-map-node {
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 10px 12px;
+  box-shadow: none;
+  gap: 12px;
+}
+.mode-list .work-map-node strong {
+  font-size: 13px;
+}
+.mode-list .work-map-node-meta {
+  flex-shrink: 0;
+}
+.mode-list .work-map-delivered .work-map-node {
+  background: transparent;
+}
+@media (max-width: 1100px) {
+  .work-map-layout {
+    grid-template-columns: minmax(0, 1fr) 230px;
+    gap: 18px;
+  }
+  .work-map-inspector {
+    padding-left: 16px;
+  }
+}
+@media (max-width: 900px) {
+  .work-map-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .work-map-inspector {
+    position: static;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 18px 0 0;
+  }
+}
+@media (max-width: 600px) {
+  .mode-list .work-map-node {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .work-map-inspector {
+    border: 0;
+    border-top: 1px solid var(--line);
+  }
+  .map-parent {
+    font-size: 12px;
+  }
+  .work-map-blocker {
+    font-size: 12px;
+  }
+}

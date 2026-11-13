@@ -19,18 +19,7 @@ function grant(store: Store, id: string): Coverage | null {
 export function activeLineage(store: Store, id: string | null) {
   if (!id) return true;
   const chain = lineage(store, id);
-  if (!chain.length || chain.some((s) => s.state !== 'active')) return false;
-  return chain.every(
-    (s, i) =>
-      !s.coverageApprovalId ||
-      !!chain
-        .slice(i + 1)
-        .find(
-          (parent) =>
-            parent.approvalId === s.coverageApprovalId &&
-            grant(store, s.coverageApprovalId!) !== null,
-        ),
-  );
+  return chain.length > 0 && chain.every((s) => ['active', 'proposed'].includes(s.state));
 }
 export function routineCoverage(store: Store, id: string | null): Coverage | null {
   if (!id || !activeLineage(store, id)) return null;
@@ -72,13 +61,6 @@ export function assertChangeMove(
       403,
       'Moving work across stream boundaries requires the owner.',
     );
-  const old = effectiveCoverage(store, from, coverageId);
-  if (scope !== 'owner' && coverageId)
-    ensure(
-      old && routineCoverage(store, to)?.approvalId === old.approvalId,
-      403,
-      'Moving covered work across approval boundaries requires the owner.',
-    );
 }
 export function subtreeIds(store: Store, id: string) {
   return (
@@ -105,7 +87,7 @@ export function revokeInactiveClaims(store: Store, now: number) {
     if (
       c.deliveredAt !== null ||
       !activeLineage(store, c.streamId) ||
-      (c.assignment === 'covered' && !effectiveCoverage(store, c.streamId, c.coverageApprovalId))
+      ['declined', 'withdrawn'].includes(c.assignment)
     )
       store.raw
         .prepare(`UPDATE collaboration_claims SET state='revoked',updatedAt=? WHERE id=?`)

@@ -1,6 +1,6 @@
 # Workflow synchronization
 
-Version 0.3.2 / workflow 1.3.0 adds structured checkpoints and local lifecycle adapters. This implements the synchronization portion of the planning-and-decisions proposal. Immutable human-readable plan versions and the broader request/navigation redesign remain separate work.
+Introduced in 0.3.2 / workflow 1.3.0: structured checkpoints and local lifecycle adapters. Current 0.5.0 / workflow 1.4.0 removes acceptance chores; question/action feedback remains the active flow, while legacy decision relays remain for compatibility. This implements the synchronization portion of the planning-and-decisions proposal. Immutable human-readable plan versions and the broader request/navigation redesign remain separate work.
 
 ## What synchronizes
 

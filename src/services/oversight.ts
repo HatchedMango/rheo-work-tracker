@@ -1,3 +1,4 @@
+import { readWorkMap } from './work-map.js';
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '../shared/contracts.js';
 import type { Node, HumanAction, AttentionItem } from '../shared/oversight.js';
@@ -10,7 +11,6 @@ import {
   lineage,
   routineCoverage,
   effectiveCoverage,
-  recordedCoverage,
   subtreeIds,
   revokeInactiveClaims,
 } from './coverage.js';
@@ -81,7 +81,7 @@ export class OversightService {
           const id = randomUUID();
           this.raw
             .prepare(
-              'INSERT INTO human_actions(id,streamId,createdBy,title,description,doneWhen,ownerId,waitingOn,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)',
+              'INSERT INTO human_actions(id,streamId,createdBy,title,description,doneWhen,ownerId,waitingOn,createdAt,updatedAt,conversationUrl) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
             )
             .run(
               id,
@@ -94,6 +94,7 @@ export class OversightService {
               p.waitingOn,
               this.now(),
               this.now(),
+              p.conversationUrl ?? null,
             );
           this.streams.event(a, p.streamId, 'human_action_requested', p.title, {
             id,
@@ -352,7 +353,7 @@ export class OversightService {
       for (const wid of [...new Set(p.changeIds)]) {
         const w = this.work.get(a, wid);
         ensure(
-          ['proposed', 'covered'].includes(w.assignment?.state ?? '') &&
+          ['proposed', 'tracked', 'covered'].includes(w.assignment?.state ?? '') &&
             w.tracking.streamId &&
             descendants.includes(w.tracking.streamId) &&
             w.lifecycle === 'open',
@@ -454,13 +455,6 @@ export class OversightService {
       const items: AttentionItem[] = [];
       const getImpact = impactIndex(this.store);
       const impactNodes = new Map<string, string>();
-      const coverageCache = new Map<string, boolean>();
-      const hasCoverage = (sid: string | null, aid: string | null) => {
-        const key = sid + ':' + aid;
-        if (!coverageCache.has(key))
-          coverageCache.set(key, !!recordedCoverage(this.store, sid, aid));
-        return coverageCache.get(key);
-      };
       const names = new Map(
         (
           this.raw.prepare('SELECT id,title FROM streams').all() as { id: string; title: string }[]
@@ -478,58 +472,6 @@ export class OversightService {
           affectedStreams: [],
         });
       };
-      for (const s of this.raw
-        .prepare(
-          "SELECT id,title,state,pendingScope,createdAt,reviewRequested FROM streams WHERE state='proposed' OR pendingScope IS NOT NULL OR (reviewRequested=1 AND state IN ('active','paused'))",
-        )
-        .all() as {
-        id: string;
-        title: string;
-        state: string;
-        pendingScope: string | null;
-        createdAt: number;
-        reviewRequested: number;
-      }[]) {
-        if (s.state === 'proposed')
-          add(
-            {
-              id: 'stream:' + s.id,
-              kind: 'stream_approval',
-              entityId: s.id,
-              title: s.title,
-              body: 'Review this direction and its scope.',
-              streamId: s.id,
-              createdAt: s.createdAt,
-            },
-            s.id,
-          );
-        if (s.pendingScope)
-          add(
-            {
-              id: 'scope:' + s.id,
-              kind: 'scope',
-              entityId: s.id,
-              title: s.title,
-              body: 'Review the proposed scope change.',
-              streamId: s.id,
-              createdAt: s.createdAt,
-            },
-            s.id,
-          );
-        if (s.reviewRequested && s.state !== 'proposed')
-          add(
-            {
-              id: 'review:' + s.id,
-              kind: 'review',
-              entityId: s.id,
-              title: s.title,
-              body: 'Stream review requested.',
-              streamId: s.id,
-              createdAt: s.createdAt,
-            },
-            s.id,
-          );
-      }
       for (const h of this.raw
         .prepare("SELECT * FROM human_actions WHERE state IN ('open','in_progress')")
         .all() as HumanAction[])
@@ -539,7 +481,8 @@ export class OversightService {
             kind: 'action',
             entityId: h.id,
             title: h.title,
-            body: h.doneWhen,
+            body: h.description,
+            conversationUrl: h.conversationUrl,
             streamId: h.streamId,
             createdAt: h.createdAt,
           },
@@ -549,121 +492,23 @@ export class OversightService {
         .prepare(
           "SELECT * FROM stream_context WHERE kind='question' AND needsHuman=1 AND state='open'",
         )
-        .all() as { id: string; streamId: string; body: string; createdAt: number }[])
+        .all() as {
+        id: string;
+        streamId: string;
+        body: string;
+        createdAt: number;
+        conversationUrl: string | null;
+      }[])
         add({
           id: 'question:' + q.id,
           kind: 'question',
           entityId: q.id,
           title: q.body,
-          body: 'Your answer is needed.',
+          body: '',
+          conversationUrl: q.conversationUrl,
           streamId: q.streamId,
           createdAt: q.createdAt,
         });
-      const invalid = new Map<string, string[]>();
-      for (const w of this.raw
-        .prepare(
-          `SELECT w.id,w.title,w.createdAt,m.streamId,m.coverageApprovalId,m.reviewRequested,a.state FROM work w JOIN change_meta m ON m.workId=w.id LEFT JOIN assignments a ON a.workId=w.id WHERE w.lifecycle='open'`,
-        )
-        .all() as {
-        id: string;
-        title: string;
-        createdAt: number;
-        streamId: string | null;
-        coverageApprovalId: string | null;
-        reviewRequested: number;
-        state: string;
-      }[]) {
-        if (w.state === 'proposed')
-          add(
-            {
-              id: 'work:' + w.id,
-              kind: 'work_approval',
-              entityId: w.id,
-              workId: w.id,
-              title: w.title,
-              body: 'Review this proposed change.',
-              streamId: w.streamId,
-              createdAt: w.createdAt,
-            },
-            w.id,
-          );
-        else if (
-          w.state === 'covered' &&
-          !hasCoverage(w.streamId, w.coverageApprovalId) &&
-          w.streamId
-        )
-          invalid.set(w.streamId, [...(invalid.get(w.streamId) ?? []), w.id]);
-        if (w.reviewRequested)
-          add(
-            {
-              id: 'review:' + w.id,
-              kind: 'review',
-              entityId: w.id,
-              workId: w.id,
-              title: w.title,
-              body: 'Change review requested.',
-              streamId: w.streamId,
-              createdAt: w.createdAt,
-            },
-            w.id,
-          );
-      }
-      for (const [sid, ids] of invalid)
-        add(
-          {
-            id: 'coverage:' + sid,
-            kind: 'coverage',
-            entityId: sid,
-            title: names.get(sid) ?? 'Stream coverage',
-            body: `${ids.length} change${ids.length === 1 ? '' : 's'} need renewed scope coverage.`,
-            streamId: sid,
-            createdAt: 0,
-          },
-          sid,
-        );
-      for (const t of this.raw
-        .prepare(
-          `SELECT t.id,t.workId,t.kind,t.createdAt,w.title,m.streamId FROM attention t JOIN work w ON w.id=t.workId JOIN change_meta m ON m.workId=w.id WHERE t.resolvedAt IS NULL AND t.kind!='assignment'`,
-        )
-        .all() as {
-        id: string;
-        workId: string;
-        kind: string;
-        createdAt: number;
-        title: string;
-        streamId: string | null;
-      }[])
-        add(
-          {
-            id: 'legacy:' + t.id,
-            kind: 'legacy',
-            entityId: t.workId,
-            workId: t.workId,
-            title: t.title,
-            body: t.kind.replaceAll('_', ' '),
-            streamId: t.streamId,
-            createdAt: t.createdAt,
-          },
-          t.workId,
-        );
-      for (const s of this.raw
-        .prepare(
-          "SELECT id,coverageApprovalId FROM streams WHERE coverageApprovalId IS NOT NULL AND state IN ('active','paused')",
-        )
-        .all() as { id: string; coverageApprovalId: string }[])
-        if (!hasCoverage(s.id, s.coverageApprovalId) && !invalid.has(s.id))
-          add(
-            {
-              id: 'coverage:' + s.id,
-              kind: 'coverage',
-              entityId: s.id,
-              title: names.get(s.id) ?? 'Stream coverage',
-              body: 'This branch needs renewed scope coverage.',
-              streamId: s.id,
-              createdAt: 0,
-            },
-            s.id,
-          );
       if (streamId) {
         this.streams.get(a, streamId);
         const ids = new Set(subtreeIds(this.store, streamId));
@@ -791,6 +636,9 @@ export class OversightService {
         ungrouped: changes.filter((w) => w.streamId === null && w.lifecycle === 'open').length,
       };
     });
+  }
+  map(a: Actor, id: string) {
+    return readWorkMap(this.streams, a, id);
   }
   detail(a: Actor, id: string, limit = 30, offset = 0) {
     return this.work.tx(() => {

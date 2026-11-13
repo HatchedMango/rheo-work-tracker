@@ -2,7 +2,7 @@
 
 A local inbox for work arriving from agents and external workflows. Accept responsibility, clarify context, and review outcomes without losing the thread across agent sessions.
 
-This version supports external capture through MCP, acceptance, context edits, notes, search, and manual completion. **No execution worker is connected yet.** Real agent execution is a future milestone; the app does not offer a run action. The simulation is retained only as an isolated test fixture.
+This version supports external capture through MCP, streams, progress tracking, simple human requests, context edits, search, and manual completion. **No execution worker is connected yet.** Real agent execution is a future milestone; the app does not offer a run action. The simulation is retained only as an isolated test fixture.
 
 The proposed next phase is documented in the [streams and agent workflows plan](docs/streams-agent-workflow-plan.md): outcome-oriented streams, reviewable changes, durable agent context, and supported client setup. These capabilities are planned, not implemented yet.
 
@@ -44,21 +44,20 @@ npm run demo
 
 ## Everyday workflow
 
-1. Ask your connected agent to submit work through MCP. It sends an objective, acceptance criteria, context, and references from the conversation where the work originated.
-2. Every new submission goes to **Inbox** for your decision. Agents cannot bypass review or choose a destination.
-3. **Accept work** to take responsibility. Acceptance does not approve execution.
-4. Add clarifying notes or **Edit context**, then do the work and **Mark complete**.
-5. Use **Work → Active** for current requests and **Work → History** for completed/cancelled work. A status dropdown narrows either view; the inbox shows only decisions waiting on you.
+1. Work with your agent in its usual chat. It records goals, changes, progress, and useful context through MCP.
+2. **Streams** shows what you are accomplishing and how the related work is progressing.
+3. **Needs you** shows only explicit questions or human actions. An optional **Open chat** link takes you back to the relevant conversation; answer there and let the agent keep the request in sync.
+4. **Changes → Active / History** provides a closer look when needed. Routine agent delivery moves to History without another acceptance step.
 
-Work rows show the title, a short preview, source, and status. Opening an item puts the decision controls near the title, followed by **Details** and **Done when**. Descriptions, criteria, and notes support Markdown formatting; long activity entries can be expanded, and context edits show readable before/after values. Embedded HTML stays escaped and remote images are not fetched.
+There is no accept/decline workflow or approval-coverage setup. Tracking and cooperative claims never authorize execution; agents still follow your instructions in chat. Idle work can be edited and manually completed under the collapsed management controls. Context edits and historical decisions retain their history.
 
-The UI has no task-creation form. Browser sessions cannot create work through the API; creation requires an external source credential. MCP is the supported intake path today; other integrations can use the same scoped API when implemented.
+The UI has no work-creation form. New work comes from an external agent credential through MCP or the scoped API. Brief descriptions lead, with detailed Markdown, criteria, evidence and history available on demand. HTML stays escaped and remote images are not fetched.
 
-You can decline an assignment without cancelling its work, pick it up later, and edit idle open work. Context edits retain before/after history. Cancellation ends the work and any active attempt; its history remains.
+Requests may include a web chat URL or a local Codex existing-chat link. Links are validated and open only when clicked; no supported URL means no link. Local links require the matching app and chat on that computer. Claude Code terminal sessions do not have a guaranteed clickable chat URL; an agent should omit it rather than guess.
 
 ## Execution
 
-Connections shows **No execution worker connected**. This accurately reflects the current implementation: there is no real coding-agent adapter. Intake, acceptance, notes, and manual completion work independently of an execution worker.
+Connections shows **No execution worker connected**. This accurately reflects the current implementation: there is no real coding-agent adapter. Tracking, human requests, notes, and manual completion work independently of an execution worker.
 
 The old simulation process has been stopped, its credential revoked, and its normal pairing/start commands removed. Simulation code lives under `tests/fixtures/` and is excluded from the production build. The normal API rejects run approvals, worker claims, and worker updates until real execution is implemented. Tests explicitly opt into a simulation-enabled application instance; the production entry point does not expose that option through environment variables or HTTP.
 
@@ -164,7 +163,7 @@ Schema migrations run transactionally on setup/startup, are recorded in `schema_
 
 See [architecture](docs/architecture.md), the [first-release implementation history](docs/implementation-plan.md), and the [streams and agent workflows plan](docs/streams-agent-workflow-plan.md).
 
-Stream-first oversight, nested streams, human requests, routine scope coverage and scoped project workflow installers are available in 0.3.0; see [usage and verification limits](docs/agent-workflow.md).
+Version 0.6.0 / workflow 1.4.1 opens streams directly into a selectable work map/list, with recorded prerequisites, feeding streams and quieter delivered work. Tracking has no acceptance chores; human requests have optional chat links; see [usage and verification limits](docs/agent-workflow.md).
 
 1. Real Codex and Claude Code session pilots, including resume/compaction and parallel handoffs.
 2. Refine the human view and bookkeeping from daily use.

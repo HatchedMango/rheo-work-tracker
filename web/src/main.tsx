@@ -32,7 +32,7 @@ import {
 import type { WorkStatus } from '../../src/shared/work-status.js';
 import './styles.css';
 import { Connections } from './Connections.js';
-import { WorkContent, ActivityContent, ContextChanges, workPreview } from './WorkContent.js';
+import { WorkContent, BriefContent, ActivityContent, ContextChanges } from './WorkContent.js';
 const views = ['active', 'history'] as const;
 type View = 'streams' | 'needs' | 'inbox' | 'connections' | (typeof views)[number];
 type StatusFilter = 'any' | WorkStatus;
@@ -130,11 +130,23 @@ function Badge({
   state,
   label,
   covered = false,
+  progress,
+  requested = false,
 }: {
   state: string;
   label?: string;
   covered?: boolean;
+  progress?: string;
+  requested?: boolean;
 }) {
+  if (!label && ['accepted', 'backlog'].includes(state)) {
+    if (progress === 'working') return <StatusBadge state="working" label="In progress" />;
+    if (progress === 'blocked') return <StatusBadge state="blocked" label="Waiting" />;
+    if (progress === 'review') return <StatusBadge state="available" label="Ready" />;
+    if (progress === 'planned' || progress === 'unreported' || covered)
+      return <StatusBadge state="planned" label="Planned" />;
+  }
+  if (state === 'delivered') return <StatusBadge state="delivered" label="Delivered" />;
   if (covered && state === 'accepted')
     return <StatusBadge state="covered" label="Stream coverage" />;
   return (
@@ -357,9 +369,9 @@ function App() {
           >
             <Inbox size={18} />
             Needs you
-            <span className={`nav-count${status?.inboxCount ? ' needs-attention' : ''}`}>
-              {status?.inboxCount || 0}
-            </span>
+            {!!status?.inboxCount && (
+              <span className="nav-count needs-attention">{status.inboxCount}</span>
+            )}
           </button>
           <button
             className={!oversightView && !settings ? 'selected' : ''}
@@ -373,9 +385,11 @@ function App() {
             Connections
           </button>
         </nav>
-        <div className="sidebar-note">
-          <WorkerStatus workers={status?.workers} />
-        </div>
+        {status?.workers.some((worker) => worker.online) && (
+          <div className="sidebar-note">
+            <WorkerStatus workers={status.workers} />
+          </div>
+        )}
       </aside>
       <main className={`main ${route.id || route.streamId ? 'has-selection' : ''}`}>
         <header className="page-header">
@@ -438,11 +452,13 @@ function App() {
                     onChange={(e) => navigate(route.view, null, e.target.value as StatusFilter)}
                   >
                     <option value="any">All statuses</option>
-                    {(route.view === 'history' ? historyStatuses : activeStatuses).map((value) => (
-                      <option key={value} value={value}>
-                        {statusLabels[value]}
-                      </option>
-                    ))}
+                    {(route.view === 'history' ? historyStatuses : activeStatuses)
+                      .filter((state) => !['accepted', 'declined'].includes(state))
+                      .map((value) => (
+                        <option key={value} value={value}>
+                          {statusLabels[value]}
+                        </option>
+                      ))}
                   </select>
                 </div>
               )}
@@ -514,43 +530,23 @@ function App() {
                               {w.priority}
                             </span>
                           )}
-                          <ChevronRight size={16} />
                         </div>
-                        <p>{workPreview(w.objective)}</p>
                         <div className="card-bottom" id={`work-meta-${w.id}`}>
                           {w.priority !== 'normal' && (
                             <span className="sr-only">{w.priority} priority.</span>
                           )}
                           <Badge
                             state={state}
+                            progress={w.tracking.progress}
+                            requested={w.tracking.reviewRequested === 1}
                             covered={w.assignment?.state === 'covered'}
-                            label={
-                              w.attention.some((a) => a.kind === 'assignment')
-                                ? 'Needs decision'
-                                : undefined
-                            }
                           />
                           {w.tracking.streamTitle && (
                             <span className="row-stream" title={w.tracking.streamTitle}>
                               {w.tracking.streamTitle}
                             </span>
                           )}
-                          {w.tracking.progress !== 'unreported' && (
-                            <span className="row-progress">{w.tracking.progress} · reported</span>
-                          )}
-                          <span className="source-name" title={w.sourceName}>
-                            {w.sourceName}
-                          </span>
-                          <time
-                            className="card-date"
-                            dateTime={new Date(w.createdAt).toISOString()}
-                            title={time(w.createdAt)}
-                          >
-                            {new Date(w.createdAt).toLocaleDateString(undefined, {
-                              month: 'short',
-                              day: 'numeric',
-                            })}
-                          </time>
+                          <ChevronRight size={16} aria-hidden="true" />
                         </div>
                       </button>
                     );
@@ -609,140 +605,100 @@ function App() {
                       <div className="detail-meta">
                         <Badge
                           state={workStatus(detail, detail.runs[0] || null, detail.assignment)}
+                          progress={detail.tracking.progress}
+                          requested={detail.tracking.reviewRequested === 1}
                           covered={detail.assignment?.state === 'covered'}
-                          label={
-                            detail.attention.some((a) => a.kind === 'assignment')
-                              ? 'Needs decision'
-                              : undefined
-                          }
                         />
-                        <span className={`priority ${detail.priority}`}>
-                          <span />
-                          {detail.priority}
-                        </span>
+                        {detail.priority !== 'normal' && (
+                          <span className={`priority ${detail.priority}`}>
+                            <span />
+                            {detail.priority}
+                          </span>
+                        )}
                       </div>
                       <h2 className="detail-title">{detail.title}</h2>
-                      <div className="owner-line">
-                        <span>From {detail.sourceName}</span>
-                        <span className="separator">·</span>
-                        <time dateTime={new Date(detail.createdAt).toISOString()}>
-                          {time(detail.createdAt)}
-                        </time>
-                      </div>
                       {detail.lifecycle === 'open' && (
-                        <div className="action-panel">
-                          {detail.tracking.reviewRequested === 1 && (
-                            <button
-                              className="secondary"
-                              disabled={busy}
-                              onClick={() =>
-                                void mutate(() =>
-                                  api(`/work/${detail.id}/tracking`, {
-                                    revision: detail.tracking.revision,
-                                    reviewRequested: false,
-                                  }),
-                                )
-                              }
-                            >
-                              Reviewed · keep open
-                            </button>
-                          )}
-                          {detail.attention.some((a) => a.kind === 'failure') && (
-                            <div className="failure-note">
-                              <strong>The last attempt was interrupted.</strong>
-                              <p>No automatic retry was started.</p>
-                              <button
-                                className="secondary"
-                                disabled={busy}
-                                onClick={() => void action('dismiss_failure')}
-                              >
-                                Acknowledge failure
-                              </button>
-                            </div>
-                          )}
-                          {run?.state === 'awaiting_review' ? (
-                            <>
-                              <h3>Review result</h3>
-                              <div className="action-buttons">
+                        <details
+                          className="action-panel"
+                          open={!!run || detail.attention.some((a) => a.kind === 'failure')}
+                        >
+                          <summary>{run ? 'Execution' : 'Manage change'}</summary>
+                          <div className="action-panel-body">
+                            {detail.attention.some((a) => a.kind === 'failure') && (
+                              <div className="failure-note">
+                                <strong>The last attempt was interrupted.</strong>
+                                <p>No automatic retry was started.</p>
                                 <button
-                                  className="primary"
+                                  className="secondary"
                                   disabled={busy}
-                                  onClick={() => void action('approve')}
+                                  onClick={() => void action('dismiss_failure')}
                                 >
-                                  <Check size={16} />
-                                  Approve result &amp; complete
+                                  Acknowledge failure
                                 </button>
                               </div>
-                              <label className="changes-label">
-                                Changes needed
-                                <textarea
-                                  rows={2}
-                                  placeholder="What should change before another attempt?"
-                                  value={changes}
-                                  onChange={(e) => setChanges(e.target.value)}
-                                />
-                              </label>
-                              <button
-                                className="secondary"
-                                disabled={busy || !changes.trim()}
-                                onClick={() => void action('changes')}
-                              >
-                                Request changes
-                              </button>
-                            </>
-                          ) : run ? (
-                            <>
-                              <h3>{run.state === 'queued' ? 'Queued' : 'Running'}</h3>
-                              <p>
-                                <WorkerStatus workers={status?.workers} />
-                              </p>
-                              <Badge state={run.state} />
-                            </>
-                          ) : !['accepted', 'covered'].includes(detail.assignment?.state ?? '') ? (
-                            <>
-                              <div className="action-buttons">
-                                <button
-                                  className="primary"
-                                  disabled={busy}
-                                  onClick={() => void action('accept')}
-                                >
-                                  <Check size={16} />
-                                  Accept work
-                                </button>
-                                {detail.assignment?.state === 'proposed' && (
+                            )}
+                            {run?.state === 'awaiting_review' ? (
+                              <>
+                                <h3>Review result</h3>
+                                <div className="action-buttons">
                                   <button
-                                    className="secondary"
+                                    className="primary"
                                     disabled={busy}
-                                    onClick={() => void action('decline')}
+                                    onClick={() => void action('approve')}
                                   >
-                                    Decline
+                                    <Check size={16} />
+                                    Approve result &amp; complete
                                   </button>
-                                )}
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="action-buttons">
+                                </div>
+                                <label className="changes-label">
+                                  Changes needed
+                                  <textarea
+                                    rows={2}
+                                    placeholder="What should change before another attempt?"
+                                    value={changes}
+                                    onChange={(e) => setChanges(e.target.value)}
+                                  />
+                                </label>
                                 <button
-                                  className="primary"
-                                  disabled={busy}
-                                  onClick={() => void action('complete')}
+                                  className="secondary"
+                                  disabled={busy || !changes.trim()}
+                                  onClick={() => void action('changes')}
                                 >
-                                  <Check size={16} />
-                                  Mark complete
+                                  Request changes
                                 </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                              </>
+                            ) : run ? (
+                              <>
+                                <h3>{run.state === 'queued' ? 'Queued' : 'Running'}</h3>
+                                <p>
+                                  <WorkerStatus workers={status?.workers} />
+                                </p>
+                                <Badge state={run.state} />
+                              </>
+                            ) : (
+                              <>
+                                <div className="action-buttons">
+                                  <button
+                                    className="primary"
+                                    disabled={busy}
+                                    onClick={() => void action('complete')}
+                                  >
+                                    <Check size={16} />
+                                    Mark complete
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </details>
                       )}
                       <section className="detail-section" aria-label="Details">
                         <h3>Details</h3>
-                        <WorkContent text={detail.objective} />
+                        <BriefContent text={detail.objective} />
                       </section>
                       {detail.acceptanceCriteria.length > 0 && (
-                        <div className="detail-section">
-                          <h3>Done when</h3>
+                        <details className="detail-section criteria-details">
+                          <summary>Success criteria</summary>
                           <ul className="criteria">
                             {detail.acceptanceCriteria.map((c, i) => (
                               <li key={i}>
@@ -753,7 +709,7 @@ function App() {
                               </li>
                             ))}
                           </ul>
-                        </div>
+                        </details>
                       )}
                       <ChangeTrackingView
                         work={detail}
@@ -800,14 +756,14 @@ function App() {
                           ))}
                         </div>
                       )}
-                      <div className="detail-section">
-                        <h3>
+                      <details className="detail-section activity-details">
+                        <summary>
                           <Activity size={16} />
                           Activity{' '}
                           {detail.events.length >= 300 && (
                             <span className="fine">Latest 300 events</span>
                           )}
-                        </h3>
+                        </summary>
                         <form
                           className="note-form"
                           onSubmit={async (e) => {
@@ -863,9 +819,10 @@ function App() {
                             </li>
                           ))}
                         </ol>
-                      </div>
+                      </details>
                       {detail.lifecycle === 'open' && (
-                        <div className="detail-footer">
+                        <details className="detail-footer">
+                          <summary>Other actions</summary>
                           <button
                             className="text-button danger"
                             disabled={busy}
@@ -880,7 +837,7 @@ function App() {
                           >
                             Cancel work
                           </button>
-                        </div>
+                        </details>
                       )}
                     </>
                   )}

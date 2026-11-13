@@ -66,8 +66,8 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
       JSON.parse((r.content as { type: string; text: string }[])[0].text);
     const w = read(created);
     expect(w.ownerId).toBeNull();
-    expect(w.assignment.state).toBe('proposed');
-    expect(w.attention.map((a: { kind: string }) => a.kind)).toEqual(['assignment']);
+    expect(w.assignment.state).toBe('tracked');
+    expect(w.attention.map((a: { kind: string }) => a.kind)).toEqual([]);
     const retry = await client.callTool({
       name: 'create_work',
       arguments: {
@@ -80,7 +80,7 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
     expect(read(retry).id).toBe(w.id);
     expect(
       read(await client.callTool({ name: 'list_work', arguments: { view: 'inbox' } })).total,
-    ).toBe(1);
+    ).toBe(0);
     await client.callTool({
       name: 'add_work_update',
       arguments: {
@@ -92,7 +92,7 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
     const item = read(await client.callTool({ name: 'get_work', arguments: { id: w.id } }));
     expect(item.events[0].message).toContain('Discovered');
     expect(item.events[0].actorName).toBe('MCP follow-up');
-    expect(service.status({ id: 'owner', scope: 'owner', ownerId: 'owner' }).inboxCount).toBe(1);
+    expect(service.status({ id: 'owner', scope: 'owner', ownerId: 'owner' }).inboxCount).toBe(0);
     const call = async (name: string, args: Record<string, unknown>) => {
       const r = await client.callTool({ name, arguments: args });
       expect(r.isError).not.toBe(true);

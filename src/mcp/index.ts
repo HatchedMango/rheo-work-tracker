@@ -14,7 +14,7 @@ const request = apiClient(
   { diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1' },
 );
 const server = new McpServer(
-  { name: 'work-inbox', version: '0.3.3' },
+  { name: 'work-inbox', version: '0.6.0' },
   { instructions: c.workflowInstructions },
 );
 async function report(activity: { kind: string; tool?: string }) {
@@ -50,7 +50,7 @@ server.registerTool(
   'create_work',
   {
     description:
-      'Submit a bounded change. Explicit within_scope additions can use active stream approval coverage; otherwise request a human decision. No execution authority.',
+      'Submit a bounded change named for its useful result in the user’s terms. Include technical detail when directly relevant to the ask. Tracking needs no acceptance or decline. No execution authority.',
     inputSchema: createSchema.shape,
   },
   (args) => result('create_work', () => request('/api/work', createSchema.parse(args))),
@@ -109,7 +109,7 @@ server.registerTool(
   'sync_work',
   {
     description:
-      'Save one structured checkpoint atomically: progress, findings and exact human responses from this chat. Read the lifecycle-provided session/turn selection first. Requires enabled chat-feedback permission for responses; never infer approval from stop/idle. Event ID is an idempotency key. Missing tool requires client reload or the local workflow checkpoint helper.',
+      'Save one structured checkpoint atomically: progress, findings and exact human responses from this chat. Summaries explain progress toward the user’s goal; include technical detail when directly relevant, and keep routine execution detail in findings. Read the lifecycle-provided session/turn selection first. Relay question/action responses only with enabled chat-feedback permission; never infer a response from stop/idle. Do not use legacy acceptance/decline responses for the current workflow. Event ID is an idempotency key. Missing tool requires client reload or the local workflow checkpoint helper.',
     inputSchema: syncEventSchema.shape,
   },
   (args) =>
@@ -143,7 +143,7 @@ server.registerTool(
   'submit_stream',
   {
     description:
-      'Submit a sustained outcome, optionally within an approved parent. Declare scopeIntent explicitly; new direction and scope expansion require a human decision.',
+      'Submit a sustained outcome, optionally within an approved parent. Start its title with a verb and the concrete goal the user wants to accomplish, not a generic category or internal project label. Track it directly without app acceptance; discuss actual direction changes in the agent chat. No execution authority.',
     inputSchema: c.submitStreamSchema.shape,
   },
   (args) =>
@@ -192,7 +192,7 @@ server.registerTool(
   'update_stream',
   {
     description:
-      'Maintain current context or propose a scope revision. Scope proposals require a human decision.',
+      'Maintain current context or scope using the expected revision. This records the goal, not human approval or execution permission. proposedScope is legacy compatibility only; use scope for current tracking.',
     inputSchema: { id: z.uuid(), ...c.streamUpdateSchema.shape },
   },
   ({ id, ...args }) =>
@@ -226,7 +226,7 @@ server.registerTool(
   'record_context',
   {
     description:
-      'Persist an attributed decision, finding, question or constraint. Use a stable idempotency key for retries.',
+      'Persist an attributed decision, finding, question or constraint. Only explicit open needsHuman questions appear in Needs you. Keep the ask short; optionally provide a validated conversationUrl to the relevant chat. Omit unavailable links. Use a stable idempotency key for retries.',
     inputSchema: { streamId: z.uuid(), ...c.contextEntrySchema.shape },
   },
   ({ streamId, ...args }) =>
@@ -260,7 +260,7 @@ server.registerTool(
   'claim_change',
   {
     description:
-      'Atomically claim an explicitly chosen accepted or currently covered change for a UUID session. Cooperative bookkeeping only; no execution or scheduling. Generate and retain a private random token before this call. Retry uncertain delivery with the same credential/session/token to recover the same lease without extending it. Keep the token private.',
+      'Atomically claim an explicitly chosen open, undelivered change for a UUID session. Cooperative bookkeeping only; no execution or scheduling. Generate and retain a private random token before this call. Retry uncertain delivery with the same credential/session/token to recover the same lease without extending it. Keep the token private.',
     inputSchema: { id: z.uuid(), ...c.claimSchema.shape },
   },
   ({ id, ...args }) =>
@@ -292,7 +292,7 @@ server.registerTool(
   'request_human_action',
   {
     description:
-      'Ask the owner to do something outside coding, with a completion condition and optional waiting-on party. Link it as a prerequisite separately. Never put secret values in task content.',
+      'Ask for a specific human action, with a clear title, completion condition and optional waiting-on party. Explain what it unlocks; omit routine agent steps. Optionally provide conversationUrl to the relevant chat; omit unavailable links. Link it as a prerequisite separately. Never put secret values in task content.',
     inputSchema: o.humanActionSchema.shape,
   },
   (args) =>
@@ -333,7 +333,7 @@ server.registerTool(
   'report_stream',
   {
     description:
-      'Report phase, progress, outcome availability or an explicit human review request. Reports never close streams. Pin dependency assessment to the fingerprint you read.',
+      'Report phase, progress toward the user’s goal, outcome availability or outcome availability. Legacy review flags do not create human requests; use an explicit short question when input is needed. Keep the summary short and understandable without chat history; include technical details when they directly matter to the ask or a decision. Reports never close streams. Pin dependency assessment to the fingerprint you read.',
     inputSchema: { streamId: z.uuid(), ...o.streamReportSchema.shape },
   },
   ({ streamId, ...args }) =>

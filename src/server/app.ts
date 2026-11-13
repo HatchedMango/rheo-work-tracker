@@ -279,6 +279,9 @@ export async function createApp(
     const p = pageSchema.extend({ streamId: z.uuid().optional() }).parse(req.query);
     return oversight.attention(authenticate(req), p.limit, p.offset, p.streamId);
   });
+  app.get('/api/streams/:id/map', async (req) =>
+    oversight.map(authenticate(req), idOf(req.params)),
+  );
   app.get('/api/streams/:id/overview', async (req) => {
     const p = pageSchema.parse(req.query);
     return oversight.detail(authenticate(req), idOf(req.params), p.limit, p.offset);

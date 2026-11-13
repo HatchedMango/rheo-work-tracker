@@ -1,6 +1,14 @@
 import AppKit
 import WebKit
 
+func allowedChatDestination(_ url: URL) -> Bool {
+    guard url.user == nil, url.password == nil else { return false }
+    if ["https", "http"].contains(url.scheme?.lowercased() ?? "") { return true }
+    return url.scheme?.lowercased() == "codex" && url.host == "threads"
+        && url.port == nil && url.query == nil && url.fragment == nil
+        && url.path.range(of: "^/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", options: .regularExpression) != nil
+}
+
 // Only the loopback application can be displayed in this window. Task references
 // and documentation links open in the user's browser, with no native JS bridge.
 final class InboxWindow: NSWindowController, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
@@ -49,8 +57,7 @@ final class InboxWindow: NSWindowController, WKNavigationDelegate, WKUIDelegate,
     }
     private func externalLink(_ action: WKNavigationAction) {
         guard action.navigationType == .linkActivated, let url = action.request.url,
-              ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
-              url.user == nil, url.password == nil else { return }
+              allowedChatDestination(url) else { return }
         NSWorkspace.shared.open(url)
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,

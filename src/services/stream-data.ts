@@ -55,8 +55,8 @@ export function readClaim(store: Store, id: string, now: number): Claim | null {
       lifecycle !== 'open' ||
       deliveredAt !== null ||
       !activeLineage(store, streamId) ||
-      (assignment === 'covered' && !effectiveCoverage(store, streamId, coverageApprovalId)) ||
-      (streamState !== null && streamState !== 'active'))
+      ['declined', 'withdrawn'].includes(assignment) ||
+      (streamState !== null && !['active', 'proposed'].includes(streamState)))
   )
     claim.state = 'revoked';
   else if (claim.state === 'active' && claim.expiresAt <= now) claim.state = 'expired';

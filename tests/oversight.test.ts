@@ -158,12 +158,12 @@ it('keeps old policy and uncertain retries intact; enables future coverage witho
     idempotencyKey: 'retry',
   };
   const old = work.create(agent, createSchema.parse(p));
-  expect(old.assignment?.state).toBe('proposed');
+  expect(old.assignment?.state).toBe('tracked');
   const enabled = streams.action(owner, root.id, {
     revision: root.revision,
     action: 'enable_coverage',
   });
-  expect(work.create(agent, createSchema.parse(p)).assignment?.state).toBe('proposed');
+  expect(work.create(agent, createSchema.parse(p)).assignment?.state).toBe('tracked');
   expect(change(root.id).assignment?.state).toBe('covered');
   expect(() =>
     flow.cover(agent, root.id, { streamRevision: enabled.revision, changeIds: [old.id] }),
@@ -175,13 +175,13 @@ it('keeps old policy and uncertain retries intact; enables future coverage witho
     agent,
     createSchema.parse({ ...p, idempotencyKey: 'expand', scopeIntent: 'scope_expansion' }),
   );
-  expect(expansion.assignment?.state).toBe('proposed');
+  expect(expansion.assignment?.state).toBe('tracked');
   expect(
     work.create(
       agent,
       createSchema.parse({ ...p, idempotencyKey: 'absent', scopeIntent: undefined }),
     ).assignment?.state,
-  ).toBe('proposed');
+  ).toBe('tracked');
 });
 it('revokes descendant claims on ancestor pause, scope drift and cross-root moves without reviving leases', () => {
   let root = approve(submit('Root'));
@@ -219,8 +219,8 @@ it('revokes descendant claims on ancestor pause, scope drift and cross-root move
       sessionId: randomUUID(),
       token: randomBytes(32).toString('base64url'),
     }),
-  ).toThrow('currently covered');
-  expect(flow.attention(owner).items.some((i) => i.kind === 'coverage')).toBe(true);
+  ).not.toThrow();
+  expect(flow.attention(owner).items.some((i) => i.kind === 'coverage')).toBe(false);
 });
 it('keeps composition separate, rejects containment and mixed stage cycles atomically, and permits parallel branches', () => {
   const root = approve(submit('Root')),
@@ -369,13 +369,15 @@ it('pins ancestor scope and action evidence while ignoring report wording and de
   s = streams.action(owner, root.id, { revision: s.revision, action: 'accept_scope' });
   expect(work.get(agent, w.id).tracking.assessmentState).toBe('stale');
   expect(work.get(agent, w.id).tracking.coverage).toBeNull();
-  expect(() =>
-    streams.claim(agent, w.id, {
-      revision: work.get(agent, w.id).tracking.revision,
-      sessionId: randomUUID(),
-      token: randomBytes(32).toString('base64url'),
-    }),
-  ).toThrow('currently covered');
+  const sessionId = randomUUID(),
+    token = randomBytes(32).toString('base64url');
+  const claimed = streams.claim(agent, w.id, {
+    revision: work.get(agent, w.id).tracking.revision,
+    sessionId,
+    token,
+  });
+  expect(claimed.claim?.state).toBe('active');
+  streams.renew(agent, claimed.claim!.id, { sessionId, token, release: true });
   flow.cover(owner, root.id, {
     streamRevision: s.revision,
     streamIds: [branch.id],

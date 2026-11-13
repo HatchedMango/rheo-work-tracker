@@ -110,7 +110,7 @@ export class StreamService {
   list(a: Actor, input: z.input<typeof c.streamListSchema> = {}) {
     this.allow(a);
     const f = c.streamListSchema.parse(input);
-    const where = `workspaceId='local' AND (?='all' OR (?='active' AND state IN ('active','paused')) OR (?='history' AND state IN ('closed','declined')) OR (?='inbox' AND (state='proposed' OR pendingScope IS NOT NULL OR EXISTS(SELECT 1 FROM stream_context c WHERE c.streamId=streams.id AND c.kind='question' AND c.state='open' AND c.needsHuman=1)))) AND (instr(lower(title),lower(?))>0 OR instr(lower(outcome),lower(?))>0)`;
+    const where = `workspaceId='local' AND (?='all' OR (?='active' AND state IN ('active','paused','proposed')) OR (?='history' AND state IN ('closed','declined')) OR (?='inbox' AND (EXISTS(SELECT 1 FROM stream_context c WHERE c.streamId=streams.id AND c.kind='question' AND c.state='open' AND c.needsHuman=1) OR EXISTS(SELECT 1 FROM human_actions h WHERE h.streamId=streams.id AND h.state IN ('open','in_progress'))))) AND (instr(lower(title),lower(?))>0 OR instr(lower(outcome),lower(?))>0)`;
     const args = [f.view, f.view, f.view, f.view, f.q, f.q];
     const total = (
       this.raw.prepare(`SELECT count(*) n FROM streams WHERE ${where}`).get(...args) as {
@@ -150,21 +150,18 @@ export class StreamService {
               p.outcome,
               p.constraints,
               p.context,
-              coverage ? 'active' : 'proposed',
+              'active',
               now,
               now,
               p.parentId ?? null,
               coverage?.approvalId ?? null,
             );
-          this.event(
-            a,
-            id,
-            'submitted',
-            coverage
-              ? 'Tracked within approved stream scope.'
-              : 'Stream submitted for a human decision.',
-            { coverage, title: p.title, outcome: p.outcome, constraints: p.constraints },
-          );
+          this.event(a, id, 'submitted', 'Stream tracked.', {
+            coverage,
+            title: p.title,
+            outcome: p.outcome,
+            constraints: p.constraints,
+          });
           return id;
         },
         (id) => this.get(a, id),
@@ -186,6 +183,14 @@ export class StreamService {
         409,
         'Reopen the stream before updating it.',
       );
+      if (p.scope) {
+        ensure(!p.proposedScope, 400, 'Use scope or legacy proposedScope, not both.');
+        this.raw
+          .prepare(
+            'UPDATE streams SET title=?,outcome=?,constraints=?,scopeRevision=scopeRevision+1 WHERE id=?',
+          )
+          .run(p.scope.title, p.scope.outcome, p.scope.constraints, id);
+      }
       this.raw
         .prepare(
           `UPDATE streams SET context=?,pendingScope=?,revision=revision+1,updatedAt=? WHERE id=?`,
@@ -203,11 +208,20 @@ export class StreamService {
       this.event(
         a,
         id,
-        p.proposedScope ? 'scope_proposed' : 'context_updated',
-        p.proposedScope
-          ? 'Scope revision proposed for a human decision.'
-          : 'Updated current context.',
-        { before: { context: s.context, pendingScope: s.pendingScope }, after: p },
+        p.scope ? 'scope_updated' : p.proposedScope ? 'scope_proposed' : 'context_updated',
+        p.scope
+          ? 'Updated stream goal and boundaries.'
+          : p.proposedScope
+            ? 'Legacy scope proposal recorded.'
+            : 'Updated current context.',
+        {
+          before: {
+            context: s.context,
+            pendingScope: s.pendingScope,
+            scope: { title: s.title, outcome: s.outcome, constraints: s.constraints },
+          },
+          after: p,
+        },
       );
       return this.get(a, id);
     });
@@ -241,11 +255,11 @@ export class StreamService {
         `Stream changed. Current revision: ${s.revision}. Reload and reconcile.`,
       );
       const transitions: Record<string, [string[], c.Stream['state']]> = {
-        accept: [['proposed'], 'active'],
+        accept: [['proposed', 'active'], 'active'],
         decline: [['proposed'], 'declined'],
-        pause: [['active'], 'paused'],
+        pause: [['active', 'proposed'], 'paused'],
         resume: [['paused'], 'active'],
-        close: [['active', 'paused'], 'closed'],
+        close: [['active', 'paused', 'proposed'], 'closed'],
         reopen: [['closed', 'declined'], 'active'],
       };
       if (p.action === 'enable_coverage') {
@@ -351,9 +365,19 @@ export class StreamService {
             now = this.now();
           this.raw
             .prepare(
-              `INSERT INTO stream_context(id,streamId,kind,body,needsHuman,createdBy,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?)`,
+              `INSERT INTO stream_context(id,streamId,kind,body,needsHuman,createdBy,createdAt,updatedAt,conversationUrl) VALUES (?,?,?,?,?,?,?,?,?)`,
             )
-            .run(entry, id, p.kind, p.body, p.needsHuman ? 1 : 0, a.id, now, now);
+            .run(
+              entry,
+              id,
+              p.kind,
+              p.body,
+              p.needsHuman ? 1 : 0,
+              a.id,
+              now,
+              now,
+              p.conversationUrl ?? null,
+            );
           this.event(a, id, 'context_recorded', `Recorded ${p.kind}.`, {
             entryId: entry,
             body: p.body,
@@ -643,16 +667,15 @@ export class StreamService {
       ensure(
         w.lifecycle === 'open' &&
           m.progress !== 'delivered' &&
-          (w.assignment?.state === 'accepted' ||
-            (w.assignment?.state === 'covered' && !!m.coverage)),
+          !['declined', 'withdrawn'].includes(w.assignment?.state ?? ''),
         409,
-        'Only accepted or currently covered open changes can be claimed.',
+        'Only open changes that are undelivered and not declined can be claimed.',
       );
       if (m.streamId)
         ensure(
           activeLineage(this.work.store, m.streamId),
           409,
-          'The stream and its ancestors must be active with current approval coverage.',
+          'The stream and its ancestors must be open and not paused.',
         );
       const previous = this.raw
         .prepare(
@@ -889,7 +912,7 @@ export class StreamService {
       const actions = streamId
         ? (this.raw
             .prepare(
-              `SELECT h.id,h.title,h.doneWhen,h.state,h.response,h.waitingOn,h.revision,h.respondedBy,h.updatedAt FROM human_actions h WHERE h.streamId=? ORDER BY CASE WHEN h.state IN ('open','in_progress') THEN 0 ELSE 1 END,h.updatedAt DESC,h.id LIMIT ? OFFSET ?`,
+              `SELECT h.id,h.title,h.doneWhen,h.state,h.response,h.waitingOn,h.revision,h.respondedBy,h.updatedAt,h.conversationUrl FROM human_actions h WHERE h.streamId=? ORDER BY CASE WHEN h.state IN ('open','in_progress') THEN 0 ELSE 1 END,h.updatedAt DESC,h.id LIMIT ? OFFSET ?`,
             )
             .all(streamId, p.limit, actionOffset) as {
             id: string;
@@ -898,6 +921,7 @@ export class StreamService {
             state: string;
             response: string;
             waitingOn: string;
+            conversationUrl: string | null;
             revision: number;
             respondedBy: string | null;
             updatedAt: number;

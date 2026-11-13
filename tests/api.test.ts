@@ -183,7 +183,7 @@ describe('local HTTP boundaries', () => {
     expect(response.statusCode).toBe(403);
     expect(store.raw.prepare('SELECT count(*) AS n FROM work').get()).toEqual({ n: 0 });
   });
-  it('always routes external work to Inbox, including legacy backlog requests and retries', async () => {
+  it('tracks external work without intake chores, preserving safe legacy routing and retries', async () => {
     const agent = ctx.auth.register('agent', 'External source');
     const headers = { host, authorization: `Bearer ${agent.secret}` };
     const cookie = await session();
@@ -203,9 +203,9 @@ describe('local HTTP boundaries', () => {
       const work = response.json();
       ids.push(work.id);
       expect(work.ownerId).toBeNull();
-      expect(work.assignment.state).toBe('proposed');
+      expect(work.assignment.state).toBe('tracked');
       expect(work.lifecycle).toBe('open');
-      expect(work.attention).toHaveLength(1);
+      expect(work.attention).toHaveLength(0);
       const retry = await ctx.app.inject({
         method: 'POST',
         url: '/api/work',
@@ -233,7 +233,7 @@ describe('local HTTP boundaries', () => {
         .json()
         .items.map((w: { id: string }) => w.id)
         .sort(),
-    ).toEqual(ids.sort());
+    ).toEqual([]);
     const accepted = await ctx.app.inject({
       method: 'POST',
       url: `/api/work/${ids[0]}/actions`,

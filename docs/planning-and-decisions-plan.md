@@ -1,5 +1,7 @@
 # Planning, decisions, and conversation continuity
 
+Superseded direction, November 12, 2026: the user requested removing app acceptance/decline for now, keeping only simple explicit human requests and optional chat links. See [simple-tracking-plan.md](simple-tracking-plan.md). The approval-centric portions below are historical proposals, not the current workflow or authorization to implement them. Immutable plans and automatic closeout remain unimplemented.
+
 Status: remaining work planned and parked as of November 12, 2026; no implementation is underway. The synchronization subset was delivered in 0.3.2, committed in f493782, and retained in installed 0.3.3; see [synchronization.md](synchronization.md). Immutable plan versions and the broader attention/navigation redesign remain unimplemented. The user has also agreed to agent-owned routine closeout and quiet parking on focus changes; that direction is recorded below, without treating discussion agreement as implementation approval. This document refines `stream-oversight-implementation-plan.md`; existing composition, prerequisites, output reporting and visual design remain the foundation.
 
 ## Product behavior

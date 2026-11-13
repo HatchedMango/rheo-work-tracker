@@ -62,6 +62,31 @@ export function workPreview(text: string) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+export function briefText(text: string, limit = 180) {
+  const plain = workPreview(text);
+  if (plain.length <= limit) return plain;
+  const cut = plain.lastIndexOf(' ', limit);
+  return `${plain.slice(0, cut > limit / 2 ? cut : limit).trimEnd()}…`;
+}
+export function BriefContent({ text, limit = 240 }: { text: string; limit?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const long =
+    workPreview(text).length > limit || text.split('\n').filter((line) => line.trim()).length > 5;
+  return (
+    <div className="brief-content">
+      {long && !expanded ? <p>{briefText(text, limit)}</p> : <WorkContent text={text} />}
+      {long && (
+        <button
+          className="text-button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? 'Less' : 'More'}
+        </button>
+      )}
+    </div>
+  );
+}
 export const ActivityContent = memo(function ActivityContent({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const id = useId();

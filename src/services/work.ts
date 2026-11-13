@@ -126,7 +126,13 @@ export class WorkService {
           attention: this.db
             .select()
             .from(s.attention)
-            .where(and(eq(s.attention.workId, id), isNull(s.attention.resolvedAt)))
+            .where(
+              and(
+                eq(s.attention.workId, id),
+                isNull(s.attention.resolvedAt),
+                sql`kind!='assignment'`,
+              ),
+            )
             .all(),
           events: events.map((x) => ({ ...x.event, actorName: x.actorName })),
         };
@@ -174,7 +180,7 @@ export class WorkService {
           );
         if (f.view === 'inbox')
           clauses.push(
-            sql`exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null)`,
+            sql`exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null and kind!='assignment')`,
           );
         if (f.view === 'active')
           clauses.push(
@@ -210,7 +216,7 @@ export class WorkService {
           clauses.push(
             eq(s.work.lifecycle, 'open'),
             sql`not exists(select 1 from runs where runs.workId=${s.work.id} and runs.state in ('queued','claimed','running','awaiting_review'))`,
-            sql`not exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null)`,
+            sql`not exists(select 1 from attention where attention.workId=${s.work.id} and resolvedAt is null and kind!='assignment')`,
           );
         const where = and(...clauses);
         const total = this.db
@@ -324,18 +330,10 @@ export class WorkService {
           id: randomUUID(),
           workId: id,
           recipientId: a.ownerId,
-          state: coverage ? 'covered' : 'proposed',
+          state: coverage ? 'covered' : 'tracked',
         })
         .run();
-      if (!coverage) this.notify(id, 'assignment');
-      this.event(
-        id,
-        a,
-        'created',
-        coverage ? 'Tracked within approved stream scope.' : 'Created and sent to your inbox.',
-        input.references,
-        { coverage },
-      );
+      this.event(id, a, 'created', 'Work tracked.', input.references, { coverage });
       if (key) this.db.insert(s.idempotency).values({ key, fingerprint, resourceId: id }).run();
       return this.get(a, id);
     });
@@ -420,7 +418,7 @@ export class WorkService {
         case 'decline': {
           ensure(!run, 409, 'Resolve the active run first.');
           ensure(
-            assignment.state === 'proposed' ||
+            ['proposed', 'tracked'].includes(assignment.state) ||
               (input.action === 'accept' && assignment.state === 'declined'),
             409,
             'Assignment already decided.',
@@ -444,7 +442,7 @@ export class WorkService {
         case 'run': {
           ensure(this.allowSimulation, 409, 'No execution worker connected.');
           ensure(
-            ['accepted', 'covered'].includes(assignment.state) &&
+            ['accepted', 'covered', 'tracked', 'proposed'].includes(assignment.state) &&
               (w.ownerId === a.id || assignment.recipientId === a.id),
             409,
             'Accept responsibility before approving execution.',
@@ -495,7 +493,7 @@ export class WorkService {
         }
         case 'complete':
           ensure(
-            ['accepted', 'covered'].includes(assignment.state) &&
+            ['accepted', 'covered', 'tracked', 'proposed'].includes(assignment.state) &&
               (w.ownerId === a.id || assignment.recipientId === a.id),
             409,
             'Accept the work first.',
@@ -524,7 +522,7 @@ export class WorkService {
         case 'approve':
         case 'changes':
           ensure(
-            run?.state === 'awaiting_review' && w.ownerId === a.id,
+            run?.state === 'awaiting_review' && run.ownerId === a.id,
             409,
             'No result is awaiting your review.',
           );

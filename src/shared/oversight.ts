@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { conversationUrlSchema } from './conversation-schema.js';
 export const scopeIntentSchema = z.enum(['within_scope', 'scope_expansion']);
 export const nodeSchema = z
   .object({ id: z.uuid(), kind: z.enum(['stream', 'change', 'human_action']) })
@@ -31,6 +32,7 @@ export const humanActionSchema = z
     description: z.string().trim().max(4000).default(''),
     doneWhen: z.string().trim().min(1).max(1500),
     waitingOn: z.string().trim().max(200).default(''),
+    conversationUrl: conversationUrlSchema.optional(),
     idempotencyKey: z.string().min(1).max(120),
   })
   .strict();
@@ -104,6 +106,7 @@ export type HumanAction = {
   response: string;
   respondedBy: string | null;
   responseSource: string | null;
+  conversationUrl: string | null;
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -134,6 +137,7 @@ export type AttentionItem = {
   workId?: string;
   entityId: string;
   body: string;
+  conversationUrl?: string | null;
   createdAt: number;
   direct: { id: string; kind: string; title: string }[];
   affectedStreams: { id: string; title: string }[];

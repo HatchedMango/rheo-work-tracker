@@ -12,7 +12,7 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { hash } from '../services/auth.js';
-import { WORKFLOW_VERSION, workflowInstructions } from '../shared/streams.js';
+import { WORKFLOW_VERSION, workflowInstructions, humanFacingReminder } from '../shared/streams.js';
 import { shellQuote } from '../services/connections.js';
 export const bindingSchema = z.object({
   version: z.string(),
@@ -111,7 +111,7 @@ function section(text: string, client: string) {
 }
 function block(o: SetupOptions) {
   const m = markers(o.client);
-  return `${m.start}\n## Work Inbox\n\nUse the work-inbox skill for work tracked through ${o.serverName}. Load get_workflow and get_stream_context with the explicitly selected stream/change at session start, resume, and after compaction before continuing. Read .work-inbox/${o.client}.json for the explicit streamId/changeId binding, if present. This local manifest contains paths and selection only; never read or print the credential file it references. If there is no selection, ask; never infer one from a repository path. Keep decisions, dependencies, uncertainty, progress, and output evidence current. Claim accepted work cooperatively, release at handoff, and leave a concise durable handoff. Work Inbox grants no execution or Git authority. If unavailable, report the failure; do not treat an empty result as fresh context.\n\nWorkflow version: ${WORKFLOW_VERSION}. Project lifecycle helpers load explicit context and check for saved checkpoints. Review/trust hooks in the client; installed hooks are not proof they have run.\n${m.end}`;
+  return `${m.start}\n## Work Inbox\n\nUse the work-inbox skill for work tracked through ${o.serverName}. Load get_workflow and get_stream_context with the explicitly selected stream/change at session start, resume, and after compaction before continuing. Read .work-inbox/${o.client}.json for the explicit streamId/changeId binding, if present. This local manifest contains paths and selection only; never read or print the credential file it references. If there is no selection, ask; never infer one from a repository path. Keep decisions, dependencies, uncertainty, progress, and output evidence current. Claim open work cooperatively, release at handoff, and leave a concise durable handoff. ${humanFacingReminder} Work Inbox grants no execution or Git authority. If unavailable, report the failure; do not treat an empty result as fresh context.\n\nWorkflow version: ${WORKFLOW_VERSION}. Project lifecycle helpers load explicit context and check for saved checkpoints. Review/trust hooks in the client; installed hooks are not proof they have run.\n${m.end}`;
 }
 export function skill() {
   return `---\nname: work-inbox\ndescription: Use when work is tracked in Work Inbox to recover current context, coordinate changes, and preserve decisions and handoffs.\n---\n\n# Work Inbox\n\n${workflowInstructions}\n\nCall get_workflow for current guidance. get_stream_context accepts streamId or changeId and bounded pagination. Use returned IDs to retrieve full change details and follow each collection cursor. Never invent a binding or choose work on the app's behalf.\n`;
@@ -130,7 +130,7 @@ function assets(o: SetupOptions) {
             {
               name: 'work-inbox',
               version: WORKFLOW_VERSION,
-              description: 'Durable work context and cooperative change tracking',
+              description: 'Track goals, progress and decisions across agent chats',
               extensions: { 'com.openai': { onboardingSkill: './skills/setup/SKILL.md' } },
             },
             null,
@@ -144,7 +144,7 @@ function assets(o: SetupOptions) {
             {
               name: 'work-inbox',
               version: WORKFLOW_VERSION,
-              description: 'Durable work context and cooperative change tracking',
+              description: 'Track goals, progress and decisions across agent chats',
               skills: './skills',
               onboardingSkill: './skills/setup/SKILL.md',
             },

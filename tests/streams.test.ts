@@ -62,18 +62,18 @@ const active = () => {
   const s = submit();
   return streams.action(owner, s.id, { action: 'accept', revision: s.revision });
 };
-it('keeps stream and change intake explicit; retries, context and scope proposals do not elevate agents', () => {
+it('tracks streams and changes without intake; retries and legacy scope proposals do not elevate agents', () => {
   const s = submit();
   expect(submit().id).toBe(s.id);
-  expect(work.status(owner).inboxCount).toBe(1);
+  expect(work.status(owner).inboxCount).toBe(0);
   expect(() => streams.action(agent, s.id, { action: 'accept', revision: 1 })).toThrow(
     'credential',
   );
   const w = change(s.id);
-  expect(w.assignment?.state).toBe('proposed');
-  expect(work.status(owner).inboxCount).toBe(2);
+  expect(w.assignment?.state).toBe('tracked');
+  expect(work.status(owner).inboxCount).toBe(0);
   const accepted = streams.action(owner, s.id, { action: 'accept', revision: 1 });
-  expect(work.get(owner, w.id).assignment?.state).toBe('proposed');
+  expect(work.get(owner, w.id).assignment?.state).toBe('tracked');
   const updated = streams.update(agent, s.id, {
     revision: accepted.revision,
     context: 'Current handoff',
@@ -81,7 +81,7 @@ it('keeps stream and change intake explicit; retries, context and scope proposal
   });
   expect(updated.title).toBe(s.title);
   expect(updated.pendingScope?.title).toBe('Wider scope');
-  expect(work.status(owner).inboxCount).toBe(2);
+  expect(work.status(owner).inboxCount).toBe(0);
   expect(() =>
     streams.update(other, s.id, { revision: accepted.revision, context: 'Overwrite' }),
   ).toThrow('Current revision');
@@ -210,7 +210,9 @@ it('atomically reserves accepted changes and exclusive resources; expiry/revocat
     a = change(s.id),
     b = change(s.id),
     sessionId = randomUUID();
-  expect(() => claim(agent, a.id, { revision: 1, sessionId })).toThrow('accepted');
+  const initial = claim(agent, a.id, { revision: 1, sessionId });
+  expect(initial.claim?.state).toBe('active');
+  streams.renew(agent, initial.claim!.id, { sessionId, token: initial.token, release: true });
   accept(a.id);
   accept(b.id);
   streams.updateChange(agent, a.id, { revision: 1, resources: ['schema'] });

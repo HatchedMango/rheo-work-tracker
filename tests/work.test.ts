@@ -51,11 +51,10 @@ function result(a: Actor, run: NonNullable<ReturnType<WorkService['claim']>>, id
   });
 }
 describe('work lifecycle', () => {
-  it('separates acceptance, execution approval, completion, and attention', () => {
+  it('keeps simulated execution explicit while routine tracking needs no acceptance', () => {
     const w = create();
-    expect(service.status(owner).inboxCount).toBe(1);
-    expect(() => act(w.id, 'run')).toThrow('Accept responsibility');
-    act(w.id, 'accept');
+    expect(service.status(owner).inboxCount).toBe(0);
+    expect(service.get(owner, w.id).runs).toEqual([]);
     expect(service.status(owner).inboxCount).toBe(0);
     expect(service.get(owner, w.id).runs).toHaveLength(0);
     act(w.id, 'run');
@@ -70,7 +69,7 @@ describe('work lifecycle', () => {
     });
     result(a, r);
     expect(service.get(owner, w.id).lifecycle).toBe('open');
-    expect(service.status(owner).inboxCount).toBe(1);
+    expect(service.status(owner).inboxCount).toBe(0);
     act(w.id, 'approve');
     expect(service.get(owner, w.id).lifecycle).toBe('completed');
     expect(service.get(owner, w.id).runs[0].state).toBe('succeeded');
@@ -78,13 +77,12 @@ describe('work lifecycle', () => {
   });
   it('supports the manual workflow with no worker', () => {
     const w = create();
-    expect(service.status(owner).inboxCount).toBe(1);
-    act(w.id, 'accept');
+    expect(service.status(owner).inboxCount).toBe(0);
     act(w.id, 'complete');
     expect(service.get(owner, w.id).runs).toEqual([]);
     expect(service.list(owner, listSchema.parse({ view: 'completed' })).total).toBe(1);
   });
-  it('enforces inbox intake for direct callers even with a legacy routing override', () => {
+  it('tracks direct submissions without trusting lifecycle or assignment overrides', () => {
     const input = {
       ...createSchema.parse({ title: 'External follow-up', objective: 'Needs a decision.' }),
       destination: 'backlog',
@@ -92,11 +90,11 @@ describe('work lifecycle', () => {
       lifecycle: 'completed',
     };
     const w = service.create(source, input);
-    expect(w.assignment?.state).toBe('proposed');
+    expect(w.assignment?.state).toBe('tracked');
     expect(w.ownerId).toBeNull();
     expect(w.lifecycle).toBe('open');
-    expect(w.attention.map((a) => a.kind)).toEqual(['assignment']);
-    expect(service.list(owner, listSchema.parse({ view: 'inbox' })).items[0].id).toBe(w.id);
+    expect(w.attention).toEqual([]);
+    expect(service.list(owner, listSchema.parse({ view: 'inbox' })).items).toEqual([]);
   });
   it('declines responsibility without cancelling the work', () => {
     const w = create();
@@ -165,7 +163,7 @@ describe('work lifecycle', () => {
     });
     const one = service.create(source, input);
     expect(service.create(source, input).id).toBe(one.id);
-    expect(service.get(owner, one.id).attention).toHaveLength(1);
+    expect(service.get(owner, one.id).attention).toHaveLength(0);
     expect(() => service.create(source, { ...input, title: 'Other' })).toThrow('different content');
     expect(service.list(owner, listSchema.parse({})).total).toBe(1);
   });
@@ -258,7 +256,7 @@ describe('worker reliability and authorization', () => {
     expect(service.reconcile()).toBe(1);
     expect(service.reconcile()).toBe(0);
     expect(service.get(owner, w.id).runs[0].state).toBe('failed');
-    expect(service.status(owner).inboxCount).toBe(1);
+    expect(service.status(owner).inboxCount).toBe(0);
     expect(() => result(a, r)).toThrow('no longer active');
     expect(service.claim(a)).toBeNull();
     act(w.id, 'run');
@@ -321,7 +319,7 @@ describe('worker reliability and authorization', () => {
           ?.snapshot.title,
       ).toBe('Durable');
       expect(disk.raw.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({
-        n: 7,
+        n: 8,
       });
       disk.close();
     } finally {

@@ -1,7 +1,7 @@
 import { StatusBadge } from './UI.js';
 import { ChevronRight, ArrowUpRight } from 'lucide-react';
 import type { Detail } from '../../src/db/schema.js';
-import { WorkContent } from './WorkContent.js';
+import { WorkContent, BriefContent } from './WorkContent.js';
 const date = (n: number) =>
   new Date(n).toLocaleString(undefined, {
     month: 'short',
@@ -27,6 +27,58 @@ export function ChangeTrackingView({
           <ChevronRight size={14} />
         </button>
       )}
+      {m.progressNote && (
+        <section className="detail-section" aria-label="Latest update">
+          <h3>Latest update</h3>
+          <BriefContent text={m.progressNote} />
+        </section>
+      )}
+      {m.prerequisites.some((d) => !d.satisfied) && (
+        <section className="detail-section" aria-label="Waiting on">
+          <h3>Waiting on</h3>
+          {m.prerequisites
+            .filter((d) => !d.satisfied)
+            .map((d) => (
+              <div className="dependency" key={d.source.id + d.stage}>
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    d.source.kind === 'change'
+                      ? onChange(d.source.id)
+                      : m.streamId &&
+                        onStream(d.source.kind === 'stream' ? d.source.id : m.streamId)
+                  }
+                >
+                  {d.title}
+                  <ChevronRight size={14} />
+                </button>
+                <BriefContent text={d.reason} limit={160} />
+              </div>
+            ))}
+        </section>
+      )}
+      {m.outputs.length > 0 && (
+        <section className="detail-section" aria-label="Reported outputs">
+          <h3>
+            Outputs <span className="subtle-count">{m.outputs.length}</span>
+          </h3>
+          {m.outputs.map((o) => (
+            <article className="output" key={o.id}>
+              <a href={o.url} target="_blank" rel="noopener noreferrer">
+                {o.label}
+                <ArrowUpRight size={14} />
+              </a>
+              <details className="output-evidence">
+                <summary>Evidence</summary>
+                <small>
+                  {o.kind} · {o.state} reported by {o.actorName} · {date(o.reportedAt)}
+                </small>
+                {o.codeRevision && <code>{o.codeRevision}</code>}
+              </details>
+            </article>
+          ))}
+        </section>
+      )}
       {(m.expectedOutput ||
         m.progress !== 'unreported' ||
         m.claim ||
@@ -36,8 +88,8 @@ export function ChangeTrackingView({
         m.resources.length > 0 ||
         m.baseRef ||
         m.streamId) && (
-        <section className="detail-section" aria-label="Change tracking">
-          <h3>Agent context</h3>
+        <details className="detail-section tracking-details" aria-label="Change tracking">
+          <summary>Tracking details</summary>
           {m.expectedOutput && (
             <>
               <h4>Expected output</h4>
@@ -77,7 +129,7 @@ export function ChangeTrackingView({
           )}
           {m.coverageApprovalId && (
             <p className="muted">
-              {m.coverage ? 'Covered by stream approval' : 'Stream coverage needs review'}
+              Historical scope coverage
               {m.coverage ? ` · scope ${m.coverage.scopeRevision}` : ''}
             </p>
           )}
@@ -121,26 +173,7 @@ export function ChangeTrackingView({
             <p className="tracking-meta">Exclusive resources: {m.resources.join(', ')}</p>
           )}
           {m.baseRef && <p className="tracking-meta">Base: {m.baseRef}</p>}
-        </section>
-      )}
-      {m.outputs.length > 0 && (
-        <section className="detail-section" aria-label="Reported outputs">
-          <h3>
-            Outputs <span className="subtle-count">{m.outputs.length}</span>
-          </h3>
-          {m.outputs.map((o) => (
-            <article className="output" key={o.id}>
-              <a href={o.url} target="_blank" rel="noopener noreferrer">
-                {o.label}
-                <ArrowUpRight size={14} />
-              </a>
-              <small>
-                {o.kind} · {o.state} reported by {o.actorName} · {date(o.reportedAt)}
-              </small>
-              {o.codeRevision && <code>{o.codeRevision}</code>}
-            </article>
-          ))}
-        </section>
+        </details>
       )}
     </>
   );
