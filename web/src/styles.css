@@ -2429,3 +2429,46 @@ button svg {
     font-size: 12px;
   }
 }
+
+.map-relationship-state {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.map-relationship-state[data-assessment='uncertain'],
+.map-relationship-state[data-assessment='stale'] {
+  color: var(--attention);
+}
+.relationship-details {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.relationship-details > summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.relationship-details[open] > summary {
+  margin-bottom: 12px;
+}
+.relationship-details p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.relationship-stage {
+  margin-top: 14px;
+}
+.relationship-details .relationship-stage h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.mode-list .map-relationship-state {
+  max-width: 150px;
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .mode-list .map-relationship-state {
+    max-width: none;
+  }
+}

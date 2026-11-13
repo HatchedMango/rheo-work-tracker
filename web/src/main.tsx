@@ -142,7 +142,7 @@ function Badge({
   if (!label && ['accepted', 'backlog'].includes(state)) {
     if (progress === 'working') return <StatusBadge state="working" label="In progress" />;
     if (progress === 'blocked') return <StatusBadge state="blocked" label="Waiting" />;
-    if (progress === 'review') return <StatusBadge state="available" label="Ready" />;
+    if (progress === 'review') return <StatusBadge state="available" label="In review" />;
     if (progress === 'planned' || progress === 'unreported' || covered)
       return <StatusBadge state="planned" label="Planned" />;
   }

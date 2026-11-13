@@ -800,7 +800,7 @@ test('streams track directly and show explicit questions, outputs and dependenci
   await expect(detail.getByRole('button', { name: 'Finish stream', exact: true })).toBeVisible();
   await detail.getByText('Details & history', { exact: true }).click();
   await nodes.filter({ hasText: 'Build the consumer' }).click();
-  await expect(inspector).toContainText('Relationships need checking against newer work.');
+  await expect(inspector.getByText('Not fully assessed', { exact: true })).toBeVisible();
   await expect(inspector).toContainText('Recorded satisfied');
   await expect(detail.locator('.work-map-edge.selected')).toHaveCount(1);
   await page.screenshot({ path: 'test-results/stream-desktop.png', fullPage: true });
@@ -1025,4 +1025,97 @@ test('tracked streams stay quiet while a simple human request links to chat and 
     '1 delivered',
   );
   await page.screenshot({ path: 'test-results/oversight-desktop.png', fullPage: true });
+});
+
+test('explicit relationship reports distinguish none, uncertainty and stale scope in Map, List and detail', async ({
+  page,
+}) => {
+  await openWorkspace(page);
+  const config = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
+  const post = async (path: string, body: unknown) => {
+    const r = await fetch(`${config.url}/api${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(r.ok).toBe(true);
+    return r.json();
+  };
+  const s = await post('/streams', {
+    title: 'Make dependency information clear',
+    outcome: 'Understand assessed independence and uncertainty',
+    idempotencyKey: randomUUID(),
+  });
+  const independent = await capture('Update settings wording', 'Use the current interface', {
+    streamId: s.id,
+  });
+  const uncertain = await capture('Connect a new provider', 'Work out the provider contract', {
+    streamId: s.id,
+  });
+  const unknown = await capture('Explore notifications', 'Review what is needed', {
+    streamId: s.id,
+  });
+  const report = async (id: string, unsure = false) => {
+    const target = { id, kind: 'change' },
+      r = await post('/dependencies/review', { target, limit: 100 });
+    return post('/dependencies/assess', {
+      target,
+      revision: r.revision,
+      scopeStreamId: r.scopeStreamId,
+      scopeFingerprint: r.scopeFingerprint,
+      planFingerprint: r.planFingerprint,
+      reviewedIds: r.items.map((i: { id: string }) => i.id),
+      coverage: 'complete',
+      start: unsure
+        ? {
+            result: 'uncertain',
+            reason: 'The provider interface is not known.',
+            nextStep: 'Read the provider documentation.',
+          }
+        : { result: 'none', reason: 'The existing interface is sufficient for wording changes.' },
+      deliver: { result: 'none', reason: 'No other output is required within this stream.' },
+      idempotencyKey: randomUUID(),
+    });
+  };
+  await report(independent.id);
+  await report(uncertain.id, true);
+  await page.goto(`/?view=streams&stream=${s.id}`);
+  const region = page.getByRole('region', { name: 'Stream detail' }),
+    node = (id: string) => region.locator(`.work-map-node[data-map-node="${id}"]`),
+    inspector = region.getByRole('complementary');
+  await expect(node(independent.id)).toContainText('No prerequisites');
+  await expect(node(uncertain.id)).toContainText('Links uncertain');
+  await expect(node(unknown.id)).toContainText('Links unassessed');
+  await expect(region.locator('.work-map-edge')).toHaveCount(0);
+  await node(independent.id).click();
+  await openDisclosure(inspector, 'No prerequisites');
+  await expect(inspector).toContainText('Before starting · None identified');
+  await expect(inspector).toContainText('existing interface is sufficient');
+  await region.getByRole('button', { name: 'List', exact: true }).click();
+  await expect(node(independent.id)).toContainText('No prerequisites');
+  await node(uncertain.id).click();
+  await openDisclosure(inspector, 'Links uncertain');
+  await expect(inspector).toContainText('Read the provider documentation.');
+  await page.screenshot({ path: 'test-results/dependency-assessment-list.png', fullPage: true });
+  await capture('Change the shared interface', 'A new related output', { streamId: s.id });
+  await expect(node(independent.id)).toContainText('Links need rechecking');
+  await node(independent.id).click();
+  await openDisclosure(inspector, 'Links need rechecking');
+  await expect(inspector).toContainText('Related work or scope changed');
+  await region.getByRole('button', { name: 'Map', exact: true }).click();
+  await page.screenshot({ path: 'test-results/dependency-assessment-map.png', fullPage: true });
+  await inspector.getByRole('button', { name: 'Open change' }).click();
+  const detail = page.getByRole('region', { name: 'Work detail' });
+  await openDisclosure(detail, 'Tracking details');
+  await openDisclosure(detail, 'Links need rechecking');
+  await expect(detail).toContainText('Before delivering · None identified');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.goto(`/?view=streams&stream=${s.id}`);
+  await expect(page.getByRole('button', { name: 'List', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/dependency-assessment-mobile.png', fullPage: true });
 });

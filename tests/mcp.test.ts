@@ -48,6 +48,8 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
         'get_stream_context',
         'update_change',
         'claim_change',
+        'review_dependencies',
+        'assess_dependencies',
       ]),
     );
     expect(tools.find((t) => t.name === 'create_work')?.inputSchema.properties).not.toHaveProperty(
@@ -64,6 +66,15 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
     expect(created.isError).not.toBe(true);
     const read = (r: typeof created) =>
       JSON.parse((r.content as { type: string; text: string }[])[0].text);
+    const workflow = read(await client.callTool({ name: 'get_workflow', arguments: {} }));
+    expect(workflow.capabilities.protocol).toBe('agent-loop-v1');
+    for (const name of workflow.capabilities.requiredTools)
+      expect(tools.some((t) => t.name === name)).toBe(true);
+    expect(
+      tools.find((t) => t.name === 'claim_change')?.inputSchema.properties?.purpose,
+    ).toMatchObject({ enum: ['collaboration', 'implementation'] });
+    expect(workflow.loopProtocol).toContain('implement → check → revise');
+    expect(workflow.capabilities.clientCheck).toContain('server contract only');
     const w = read(created);
     expect(w.ownerId).toBeNull();
     expect(w.assignment.state).toBe('tracked');
@@ -276,6 +287,44 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
       idempotencyKey: 'withdraw',
     });
     expect((await call('get_human_action', { actionId: human.id })).state).toBe('cancelled');
+    const standalone = await call('create_work', {
+      title: 'Independent copy change',
+      objective: 'Change wording using the existing interface.',
+    });
+    const t = { id: standalone.id, kind: 'change' };
+    const review = await call('review_dependencies', { target: t });
+    expect(review.scopeStreamId).toBeNull();
+    const report = await call('assess_dependencies', {
+      target: t,
+      revision: review.revision,
+      scopeStreamId: review.scopeStreamId,
+      scopeFingerprint: review.scopeFingerprint,
+      planFingerprint: review.planFingerprint,
+      reviewedIds: review.items.map((x: { id: string }) => x.id),
+      coverage: 'complete',
+      start: { result: 'none', reason: 'No new output is required for this copy change.' },
+      deliver: {
+        result: 'none',
+        reason: 'This uses the current interface and has no delivery gate.',
+      },
+      idempotencyKey: 'explicit-none',
+    });
+    expect(report.state).toBe('current');
+    const request = {
+      id: standalone.id,
+      revision: report.revision,
+      sessionId: crypto.randomUUID(),
+      token: crypto.randomUUID().replaceAll('-', ''),
+      purpose: 'implementation',
+    };
+    const managed = await call('claim_change', request);
+    expect(managed.claim.purpose).toBe('implementation');
+    await call('update_claim', {
+      id: managed.claim.id,
+      sessionId: request.sessionId,
+      token: request.token,
+      release: true,
+    });
     expect(
       store.raw.prepare('SELECT project FROM workflow_reads WHERE credentialId=?').get(c.id),
     ).toEqual({ project: '/explicit/project' });

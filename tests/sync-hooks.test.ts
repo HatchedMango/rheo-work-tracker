@@ -12,17 +12,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { openStore } from '../src/db/index.js';
 import { createApp } from '../src/server/app.js';
 import { workflowSetup } from '../src/workflow/setup.js';
-import { runHook, saveCheckpoint } from '../src/workflow/hooks.js';
-import { SyncOutbox } from '../src/workflow/outbox.js';
+import { runHook, saveCheckpoint, setStopPolicy, selectWork } from '../src/workflow/hooks.js';
+import { SyncOutbox, privateWrite } from '../src/workflow/outbox.js';
+import { readSession, sessionPath, withSession } from '../src/workflow/session-state.js';
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   vi.unstubAllEnvs();
 });
-async function fixture() {
+async function fixture(client: 'codex' | 'claude-code' = 'codex') {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'work-inbox-sync-')));
   dirs.push(dir);
   vi.stubEnv('WORK_INBOX_SYNC_HOME', join(dir, 'private-sync'));
@@ -44,13 +47,13 @@ async function fixture() {
   writeFileSync(credentialFile, JSON.stringify({ url: origin, token: c.secret }), { mode: 0o600 });
   workflowSetup('install', {
     project: dir,
-    client: 'codex',
+    client,
     credentialFile,
     helper: join(dir, 'helper'),
     serverName: 'fixture',
     streamId: stream.id,
   });
-  const binding = join(dir, '.work-inbox/codex.json');
+  const binding = join(dir, `.work-inbox/${client}.json`);
   return { ...services, dir, store, agent, stream, credentialFile, binding, port };
 }
 it('recovers offline lifecycle writes and checks for a real checkpoint, with a single continuation and no transcript capture', async () => {
@@ -180,6 +183,253 @@ it('replays an uncertain successful write once and quarantines conflicts without
     expect(
       f.sync.list({ id: 'owner', scope: 'owner', ownerId: 'owner' }).items[0].pendingWrites,
     ).toBe(0);
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+for (const client of ['codex', 'claude-code'] as const) {
+  it(`${client}: durably suppresses repeated stops, including continuation turns and recovery`, async () => {
+    const f = await fixture(client);
+    try {
+      await f.app.listen({ port: f.port, host: '127.0.0.1' });
+      const input = { session_id: 'repeat', ...(client === 'codex' ? { turn_id: 'one' } : {}) };
+      await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' });
+      expect(await runHook(f.binding, { ...input, hook_event_name: 'Stop' })).toHaveProperty(
+        'decision',
+        'block',
+      );
+      for (let i = 0; i < 3; i++)
+        expect(await runHook(f.binding, { ...input, hook_event_name: 'Stop' })).not.toHaveProperty(
+          'decision',
+        );
+      // A continuation can be a new user-prompt event, with no active flag.
+      const continuation = {
+        session_id: 'repeat',
+        ...(client === 'codex' ? { turn_id: 'two' } : {}),
+      };
+      await runHook(f.binding, { ...continuation, hook_event_name: 'UserPromptSubmit' });
+      const outbox = new SyncOutbox(f.credentialFile, f.dir, client);
+      expect(readSession(outbox, 'repeat').reminder).toBeDefined();
+      await runHook(f.binding, {
+        ...continuation,
+        hook_event_name: 'SessionStart',
+        source: 'compact',
+      });
+      expect(
+        await runHook(f.binding, { ...continuation, hook_event_name: 'Stop' }),
+      ).not.toHaveProperty('decision');
+      const file = join(f.dir, 'cp.json');
+      writeFileSync(
+        file,
+        JSON.stringify({ summary: 'Check failed; next revise the parser, same output.' }),
+      );
+      expect((await saveCheckpoint(f.binding, file, 'repeat')).pending).toBe(0);
+      expect(await runHook(f.binding, { ...continuation, hook_event_name: 'Stop' })).toEqual({});
+      await runHook(f.binding, {
+        ...continuation,
+        hook_event_name: 'UserPromptSubmit',
+        ...(client === 'codex' ? { turn_id: 'three' } : {}),
+      });
+      expect(
+        await runHook(f.binding, {
+          hook_event_name: 'Stop',
+          session_id: 'repeat',
+          ...(client === 'codex' ? { turn_id: 'three' } : {}),
+        }),
+      ).toHaveProperty('decision', 'block');
+      expect(statSync(sessionPath(outbox, 'repeat')).mode & 0o777).toBe(0o600);
+    } finally {
+      await f.app.close();
+      f.store.close();
+    }
+  });
+}
+it('keeps runner policy per session and never overrides another hook or an interrupt', async () => {
+  const f = await fixture();
+  try {
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    await setStopPolicy(f.binding, 'runner', 'observe');
+    for (const session_id of ['runner', 'normal'])
+      await runHook(f.binding, { hook_event_name: 'UserPromptSubmit', session_id, turn_id: 'one' });
+    for (let i = 0; i < 3; i++) {
+      const r = await runHook(f.binding, {
+        hook_event_name: 'Stop',
+        session_id: 'runner',
+        turn_id: 'one',
+      });
+      expect(r).not.toHaveProperty('decision');
+      expect(r).not.toHaveProperty('continue');
+      expect(r).not.toHaveProperty('hookSpecificOutput');
+    }
+    expect(
+      await runHook(f.binding, { hook_event_name: 'Stop', session_id: 'normal', turn_id: 'one' }),
+    ).toHaveProperty('decision', 'block');
+    await runHook(f.binding, {
+      hook_event_name: 'SessionStart',
+      session_id: 'runner',
+      source: 'resume',
+    });
+    expect(
+      await runHook(f.binding, { hook_event_name: 'Stop', session_id: 'runner' }),
+    ).not.toHaveProperty('decision');
+    const interrupted = await runHook(f.binding, {
+      hook_event_name: 'Interrupt',
+      session_id: 'runner',
+      turn_id: 'one',
+    });
+    expect(interrupted).not.toHaveProperty('decision');
+    expect(interrupted).not.toHaveProperty('continue');
+    expect(
+      f.sync
+        .list({ id: 'owner', scope: 'owner', ownerId: 'owner' })
+        .items.find((x) => x.sessionId === 'runner'),
+    ).toMatchObject({ needsCheckpoint: 1, summary: '' });
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+it('uses compact prompts, full recovery, and keeps older turn notifications from rolling back state', async () => {
+  const f = await fixture();
+  try {
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    const input = { session_id: 'recover', turn_id: 'current' };
+    await runHook(f.binding, { ...input, hook_event_name: 'SessionStart', source: 'startup' });
+    const refresh = await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' });
+    expect(refresh.hookSpecificOutput?.additionalContext).toContain('"mode":"compact"');
+    const recovery = await runHook(f.binding, {
+      ...input,
+      hook_event_name: 'SessionStart',
+      source: 'compact',
+    });
+    expect(JSON.stringify(recovery)).toContain('workflowVersion');
+    expect(recovery.hookSpecificOutput?.additionalContext).not.toContain('"mode":"compact"');
+    expect(
+      await runHook(f.binding, {
+        hook_event_name: 'Stop',
+        session_id: input.session_id,
+        turn_id: 'old',
+      }),
+    ).not.toHaveProperty('decision');
+    expect(f.sync.list({ id: 'owner', scope: 'owner', ownerId: 'owner' }).items[0].turnId).toBe(
+      'current',
+    );
+    const file = join(f.dir, 'cp.json');
+    writeFileSync(file, JSON.stringify({ summary: 'Incomplete; next check recovery.' }));
+    await saveCheckpoint(f.binding, file, input.session_id);
+    expect(
+      JSON.stringify(
+        await runHook(f.binding, { ...input, hook_event_name: 'SessionStart', source: 'resume' }),
+      ),
+    ).toContain('Incomplete; next check recovery.');
+    expect(await runHook(f.binding, { ...input, hook_event_name: 'Interrupt' })).not.toHaveProperty(
+      'decision',
+    );
+    expect(await runHook(f.binding, { ...input, hook_event_name: 'Stop' })).toHaveProperty(
+      'decision',
+      'block',
+    );
+    expect(await runHook(f.binding, { ...input, hook_event_name: 'Stop' })).not.toHaveProperty(
+      'decision',
+    );
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+it('migrates legacy selections, isolates concurrent sessions and atomically emits one reminder', async () => {
+  const f = await fixture();
+  try {
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    const outbox = new SyncOutbox(f.credentialFile, f.dir, 'codex');
+    privateWrite(join(outbox.directory, 'sessions.json'), { legacy: { turnId: 'old' } });
+    privateWrite(join(outbox.directory, 'selection.json'), { legacy: { streamId: f.stream.id } });
+    expect(readSession(outbox, 'legacy')).toMatchObject({
+      turnId: 'old',
+      selected: { streamId: f.stream.id },
+    });
+    const sessions = ['legacy', 'parallel-1', 'parallel-2'];
+    await Promise.all(
+      sessions.map((session_id) =>
+        runHook(f.binding, {
+          hook_event_name: 'UserPromptSubmit',
+          session_id,
+          turn_id: session_id,
+        }),
+      ),
+    );
+    await outbox.flush();
+    for (const id of sessions) expect(readSession(outbox, id).turnId).toBe(id);
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        runHook(f.binding, { hook_event_name: 'Stop', session_id: 'legacy', turn_id: 'legacy' }),
+      ),
+    );
+    expect(results.filter((r) => 'decision' in r)).toHaveLength(1);
+    expect(readFileSync(join(outbox.directory, 'sessions.json'), 'utf8')).toContain('old');
+    await selectWork(f.binding, 'legacy', { streamId: f.stream.id });
+    expect(readSession(outbox, 'parallel-1').turnId).toBe('parallel-1');
+    // The same-session lock also prevents competing local state mutations.
+    await Promise.all(
+      Array.from({ length: 5 }, () =>
+        withSession(outbox, 'locked', (state) => {
+          state.occurredAt = (state.occurredAt ?? 0) + 1;
+        }),
+      ),
+    );
+    expect(readSession(outbox, 'locked').occurredAt).toBe(5);
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+it('rejects stale guidance without enqueuing unsupported events', async () => {
+  const f = await fixture();
+  try {
+    const b = JSON.parse(readFileSync(f.binding, 'utf8'));
+    b.version = '1.0.0';
+    writeFileSync(f.binding, JSON.stringify(b));
+    expect(
+      JSON.stringify(
+        await runHook(f.binding, { hook_event_name: 'SessionStart', session_id: 'old-client' }),
+      ),
+    ).toContain('needs updating');
+    expect(new SyncOutbox(f.credentialFile, f.dir, 'codex').pending()).toEqual([]);
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+it('coordinates independent helper processes without losing the same session state', async () => {
+  const f = await fixture();
+  try {
+    const script = `
+      import { SyncOutbox } from './src/workflow/outbox.ts';
+      import { withSession } from './src/workflow/session-state.ts';
+      const outbox = new SyncOutbox(process.env.TEST_CREDENTIAL_PATH, process.env.TEST_PROJECT_PATH, 'codex');
+      for (let i = 0; i < 10; i++) await withSession(outbox, 'process-session', state => { state.occurredAt = (state.occurredAt ?? 0) + 1; });
+    `;
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        promisify(execFile)(
+          process.execPath,
+          ['--import', 'tsx', '--input-type=module', '-e', script],
+          {
+            env: {
+              ...process.env,
+              TEST_CREDENTIAL_PATH: f.credentialFile,
+              TEST_PROJECT_PATH: f.dir,
+            },
+          },
+        ),
+      ),
+    );
+    expect(
+      readSession(new SyncOutbox(f.credentialFile, f.dir, 'codex'), 'process-session').occurredAt,
+    ).toBe(30);
   } finally {
     await f.app.close();
     f.store.close();

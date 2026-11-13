@@ -1,3 +1,8 @@
+import {
+  readDependencyAssessment,
+  assertImplementationReady,
+  type AssessmentCache,
+} from './dependency-assessments.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Actor } from '../shared/contracts.js';
@@ -82,7 +87,7 @@ export class StreamService {
     this.raw.prepare('INSERT INTO idempotency VALUES (?,?,?)').run(k, fingerprint, id);
     return read(id);
   }
-  get(a: Actor, id: string): c.Stream {
+  get(a: Actor, id: string, assessmentCache?: AssessmentCache): c.Stream {
     this.allow(a);
     const row = this.raw
       .prepare(
@@ -100,6 +105,11 @@ export class StreamService {
         : routineCoverage(this.work.store, id),
       dependencies: flowDependencies(this.work.store, id),
       assessmentFingerprint,
+      dependencyAssessment: readDependencyAssessment(
+        this.work.store,
+        { id, kind: 'stream' },
+        assessmentCache,
+      ),
       assessmentState: !assessment
         ? 'unknown'
         : assessment === assessmentFingerprint
@@ -689,6 +699,11 @@ export class StreamService {
           409,
           'This claim attempt is no longer active. Start a new attempt with a new private token.',
         );
+        ensure(
+          m.claim?.purpose === p.purpose,
+          409,
+          'Claim purpose differs from the original attempt. Release it and use a new private token.',
+        );
         return { claim: m.claim, token: p.token };
       }
       ensure(m.claim?.state !== 'active', 409, 'This change already has an active claim.');
@@ -707,6 +722,10 @@ export class StreamService {
         409,
         'An exclusive resource is already claimed.',
       );
+      const assessment =
+        p.purpose === 'implementation'
+          ? assertImplementationReady(this.work.store, { id, kind: 'change' })
+          : null;
       const claimId = randomUUID(),
         token = p.token,
         now = this.now();
@@ -724,6 +743,10 @@ export class StreamService {
           now,
           now,
         );
+      if (assessment?.id)
+        this.raw
+          .prepare('INSERT INTO implementation_claims VALUES (?,?)')
+          .run(claimId, assessment.id);
       this.work.event(
         id,
         a,
@@ -760,6 +783,11 @@ export class StreamService {
         'Claim ownership does not match this credential/session.',
       );
       ensure(claim.state === 'active', 409, 'This claim is no longer active.');
+      if (
+        !p.release &&
+        this.raw.prepare('SELECT 1 FROM implementation_claims WHERE claimId=?').get(id)
+      )
+        assertImplementationReady(this.work.store, { id: claim.workId, kind: 'change' });
       const w = this.work.row(a, claim.workId);
       ensure(
         p.release || w.lifecycle === 'open',
@@ -848,6 +876,7 @@ export class StreamService {
         assignment: w.assignment,
         tracking: {
           ...w.tracking,
+          dependencyAssessment: briefAssessment(w.tracking.dependencyAssessment),
           streamTitle: w.tracking.streamTitle === null ? null : clip(w.tracking.streamTitle, 180),
           reporterName:
             w.tracking.reporterName === null ? null : clip(w.tracking.reporterName, 120),
@@ -885,6 +914,7 @@ export class StreamService {
       const streamSummary = stream
         ? {
             ...stream,
+            dependencyAssessment: briefAssessment(stream.dependencyAssessment),
             dependencies: stream.dependencies
               .slice(0, 4)
               .map((d) => ({ ...d, title: clip(d.title, 180), reason: clip(d.reason, 400) })),
@@ -1057,4 +1087,22 @@ export class StreamService {
       return response;
     });
   }
+}
+
+function briefAssessment(a: import('../shared/dependency-assessments.js').DependencyAssessment) {
+  const stage = (s: typeof a.start) =>
+    s
+      ? {
+          ...s,
+          reason: s.reason.slice(0, 80),
+          ...(s.result === 'uncertain' ? { nextStep: s.nextStep.slice(0, 80) } : {}),
+        }
+      : null;
+  return {
+    ...a,
+    scopeTitle: a.scopeTitle.slice(0, 80),
+    actorName: a.actorName?.slice(0, 80) ?? null,
+    start: stage(a.start),
+    deliver: stage(a.deliver),
+  };
 }

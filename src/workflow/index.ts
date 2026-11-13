@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { apiClient, readCredential } from '../shared/client.js';
 import { bindingSchema, workflowSetup } from './setup.js';
 import { WORKFLOW_VERSION } from '../shared/streams.js';
-import { runHook, saveCheckpoint, checkpointFile, selectWork } from './hooks.js';
+import { runHook, saveCheckpoint, checkpointFile, selectWork, setStopPolicy } from './hooks.js';
 import { SyncOutbox } from './outbox.js';
 export async function runWorkflow(argv: string[]) {
   const [command, ...args] = argv,
@@ -49,6 +49,17 @@ export async function runWorkflow(argv: string[]) {
       pending: result.pending,
       conflicts: result.conflicts,
     });
+  }
+  if (command === 'mode') {
+    const f = z
+      .object({
+        binding: z.string().min(1),
+        'session-id': z.string().min(1).max(200),
+        'stop-policy': z.enum(['checkpoint-once', 'observe']),
+      })
+      .strict()
+      .parse(flags);
+    return JSON.stringify(await setStopPolicy(f.binding, f['session-id'], f['stop-policy']));
   }
   if (command === 'select') {
     const f = z

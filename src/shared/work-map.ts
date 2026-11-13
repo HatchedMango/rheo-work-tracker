@@ -11,6 +11,7 @@ export type MapNode = {
   tone: 'active' | 'waiting' | 'attention' | 'quiet' | 'planned';
   assessment: 'unknown' | 'current' | 'stale';
   prerequisiteCount: number;
+  dependencyAssessment: import('./dependency-assessments.js').DependencyAssessment | null;
   quiet: boolean;
   reference: boolean;
   conversationUrl: string | null;

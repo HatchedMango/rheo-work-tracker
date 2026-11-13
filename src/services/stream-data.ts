@@ -1,3 +1,4 @@
+import { readDependencyAssessment, type AssessmentCache } from './dependency-assessments.js';
 import type { Store } from '../db/index.js';
 import type { ChangeTracking, Claim, Output, Dependency } from '../shared/streams.js';
 import { flowFingerprint, flowDependencies } from './flow.js';
@@ -15,6 +16,7 @@ export type Meta = Omit<
   | 'resources'
   | 'coverage'
   | 'prerequisites'
+  | 'dependencyAssessment'
 > & { areas: string; resources: string; assessment: string | null };
 export function planFingerprint(store: Store, id: string) {
   return flowFingerprint(store, { id, kind: 'change' });
@@ -22,7 +24,7 @@ export function planFingerprint(store: Store, id: string) {
 export function readClaim(store: Store, id: string, now: number): Claim | null {
   const c = store.raw
     .prepare(
-      `SELECT c.id,c.workId,c.actorId,a.name actorName,c.sessionId,c.planRevision,c.state,c.expiresAt,c.createdAt,c.updatedAt,cr.revokedAt,cr.expiresAt credentialExpiresAt,w.lifecycle,s.state streamState,m.streamId,m.coverageApprovalId,m.deliveredAt,(SELECT state FROM assignments WHERE workId=w.id) assignment FROM collaboration_claims c JOIN actors a ON a.id=c.actorId JOIN credentials cr ON cr.id=c.credentialId JOIN work w ON w.id=c.workId JOIN change_meta m ON m.workId=c.workId LEFT JOIN streams s ON s.id=m.streamId WHERE c.workId=? ORDER BY c.createdAt DESC,c.rowid DESC LIMIT 1`,
+      `SELECT c.id,c.workId,c.actorId,a.name actorName,c.sessionId,c.planRevision,CASE WHEN EXISTS(SELECT 1 FROM implementation_claims ic WHERE ic.claimId=c.id) THEN 'implementation' ELSE 'collaboration' END purpose,c.state,c.expiresAt,c.createdAt,c.updatedAt,cr.revokedAt,cr.expiresAt credentialExpiresAt,w.lifecycle,s.state streamState,m.streamId,m.coverageApprovalId,m.deliveredAt,(SELECT state FROM assignments WHERE workId=w.id) assignment FROM collaboration_claims c JOIN actors a ON a.id=c.actorId JOIN credentials cr ON cr.id=c.credentialId JOIN work w ON w.id=c.workId JOIN change_meta m ON m.workId=c.workId LEFT JOIN streams s ON s.id=m.streamId WHERE c.workId=? ORDER BY c.createdAt DESC,c.rowid DESC LIMIT 1`,
     )
     .get(id) as
     | (Claim & {
@@ -62,7 +64,12 @@ export function readClaim(store: Store, id: string, now: number): Claim | null {
   else if (claim.state === 'active' && claim.expiresAt <= now) claim.state = 'expired';
   return claim;
 }
-export function readTracking(store: Store, id: string, now: number): ChangeTracking {
+export function readTracking(
+  store: Store,
+  id: string,
+  now: number,
+  assessmentCache?: AssessmentCache,
+): ChangeTracking {
   const m = store.raw
     .prepare(
       `SELECT m.*,s.title streamTitle,a.name reporterName FROM change_meta m LEFT JOIN streams s ON s.id=m.streamId LEFT JOIN actors a ON a.id=m.reportedBy WHERE m.workId=?`,
@@ -88,6 +95,7 @@ export function readTracking(store: Store, id: string, now: number): ChangeTrack
     areas: JSON.parse(m.areas),
     resources: JSON.parse(m.resources),
     assessmentFingerprint,
+    dependencyAssessment: readDependencyAssessment(store, { id, kind: 'change' }, assessmentCache),
     assessmentState: !assessment
       ? 'unknown'
       : assessment === assessmentFingerprint

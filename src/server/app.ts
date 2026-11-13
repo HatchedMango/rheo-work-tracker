@@ -1,3 +1,5 @@
+import { DependencyAssessmentService } from '../services/dependency-assessments.js';
+import * as assessmentContracts from '../shared/dependency-assessments.js';
 import { OversightService } from '../services/oversight.js';
 import { SyncService } from '../services/sync.js';
 import { syncEventSchema, queueReportSchema } from '../shared/sync.js';
@@ -51,6 +53,7 @@ export async function createApp(
   const streams = new StreamService(service);
   const oversight = new OversightService(streams);
   const sync = new SyncService(oversight);
+  const assessments = new DependencyAssessmentService(streams);
   const connections = new ConnectionService(store, {
     origin: options.origin,
     directory:
@@ -385,6 +388,18 @@ export async function createApp(
       streamContracts.outputSchema.parse(req.body),
     ),
   );
+  app.get('/api/dependency-assessment', async (req) =>
+    assessments.read(
+      authenticate(req),
+      assessmentContracts.assessmentTargetSchema.parse(req.query),
+    ),
+  );
+  app.post('/api/dependencies/review', async (req) =>
+    assessments.review(writeActor(req), assessmentContracts.assessmentReviewSchema.parse(req.body)),
+  );
+  app.post('/api/dependencies/assess', async (req) =>
+    assessments.report(writeActor(req), assessmentContracts.assessmentReportSchema.parse(req.body)),
+  );
   app.post('/api/work/:id/claims', async (req) =>
     streams.claim(writeActor(req), idOf(req.params), streamContracts.claimSchema.parse(req.body)),
   );
@@ -400,6 +415,8 @@ export async function createApp(
     return {
       version: streamContracts.WORKFLOW_VERSION,
       instructions: streamContracts.workflowInstructions,
+      loopProtocol: streamContracts.loopProtocol,
+      capabilities: streamContracts.workflowCapabilities,
     };
   });
   app.get('/api/context', async (req) =>

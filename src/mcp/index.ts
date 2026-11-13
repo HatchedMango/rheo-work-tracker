@@ -1,3 +1,4 @@
+import * as assessmentContracts from '../shared/dependency-assessments.js';
 import * as c from '../shared/streams.js';
 import * as o from '../shared/oversight.js';
 import { syncEventSchema } from '../shared/sync.js';
@@ -14,7 +15,7 @@ const request = apiClient(
   { diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1' },
 );
 const server = new McpServer(
-  { name: 'work-inbox', version: '0.6.0' },
+  { name: 'work-inbox', version: '0.7.0' },
   { instructions: c.workflowInstructions },
 );
 async function report(activity: { kind: string; tool?: string }) {
@@ -204,7 +205,7 @@ server.registerTool(
   'update_change',
   {
     description:
-      'Update permitted tracking, typed prerequisites, exclusive resources and reported progress with an expected metadata revision. Unknown dependencies are not independence. Save plan changes first, then assess using assessmentFingerprint from the context you read; upstream drift conflicts.',
+      'Update permitted tracking, typed prerequisites, exclusive resources and reported progress with an expected metadata revision. Unknown dependencies are not independence. Save plan changes first, then use review_dependencies and assess_dependencies for required staged reports with rationale and scoped review. The older assessDependencies flag is compatibility evidence only.',
     inputSchema: { id: z.uuid(), ...c.changeUpdateSchema.shape },
   },
   ({ id, ...args }) =>
@@ -260,7 +261,7 @@ server.registerTool(
   'claim_change',
   {
     description:
-      'Atomically claim an explicitly chosen open, undelivered change for a UUID session. Cooperative bookkeeping only; no execution or scheduling. Generate and retain a private random token before this call. Retry uncertain delivery with the same credential/session/token to recover the same lease without extending it. Keep the token private.',
+      'Atomically claim an explicitly chosen open, undelivered change for a UUID session. Use purpose=implementation for managed preflight: complete/current explicit staged assessment plus satisfied start/ancestor gates. Default collaboration preserves planning/legacy behavior and never certifies readiness. Cooperative bookkeeping only; no execution or scheduling. Generate and retain a private random token before this call. Retry uncertain delivery with the same credential/session/token to recover the same lease without extending it. Keep the token private.',
     inputSchema: { id: z.uuid(), ...c.claimSchema.shape },
   },
   ({ id, ...args }) =>
@@ -365,4 +366,29 @@ server.registerTool(
       request(`/api/streams/${streamId}/outputs`, c.outputSchema.parse(args)),
     ),
 );
+server.registerTool(
+  'review_dependencies',
+  {
+    description:
+      'Read a scoped, paged inventory for an explicit stream/change. Review every relevant page/full record and retain scopeFingerprint, planFingerprint, target revision and IDs reviewed. The default scope is the selected stream subtree, plus recorded direct cross-stream links; use an ancestor scope for related branches. Over 1000 items cannot be assessed complete in one scope.',
+    inputSchema: assessmentContracts.assessmentReviewSchema.shape,
+  },
+  (args) =>
+    result('review_dependencies', () =>
+      request('/api/dependencies/review', assessmentContracts.assessmentReviewSchema.parse(args)),
+    ),
+);
+server.registerTool(
+  'assess_dependencies',
+  {
+    description:
+      'Report explicit start and delivery assessments: linked, none with rationale, or uncertain with a next step. Save prerequisites first. Complete coverage requires all reviewed IDs and current scope/plan fingerprints; missing links alone are not independence. This is attributed context, never execution permission.',
+    inputSchema: assessmentContracts.assessmentReportSchema.shape,
+  },
+  (args) =>
+    result('assess_dependencies', () =>
+      request('/api/dependencies/assess', assessmentContracts.assessmentReportSchema.parse(args)),
+    ),
+);
+
 await server.connect(new StdioServerTransport());

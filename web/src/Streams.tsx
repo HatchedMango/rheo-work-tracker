@@ -1,3 +1,4 @@
+import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { StatusBadge } from './UI.js';
 import { ChevronRight, ArrowUpRight } from 'lucide-react';
 import type { Detail } from '../../src/db/schema.js';
@@ -114,16 +115,19 @@ export function ChangeTrackingView({
               {m.claim.planRevision !== m.planRevision && <span>· Plan changed since claim</span>}
             </p>
           )}
-          <div className="dependency-heading">
-            <h4>Prerequisites</h4>
-            <StatusBadge className="assessment" state={m.assessmentState}>
-              {m.assessmentState === 'unknown'
-                ? 'Not assessed'
-                : m.assessmentState === 'stale'
-                  ? 'Assessment stale'
-                  : 'Agent assessed'}
-            </StatusBadge>
-          </div>
+          <DependencyAssessmentView assessment={m.dependencyAssessment} />
+          {m.dependencyAssessment.state === 'legacy' && (
+            <div className="dependency-heading">
+              <h4>Prerequisites</h4>
+              <StatusBadge className="assessment" state={m.assessmentState}>
+                {m.assessmentState === 'unknown'
+                  ? 'Not assessed'
+                  : m.assessmentState === 'stale'
+                    ? 'Assessment stale'
+                    : 'Agent assessed'}
+              </StatusBadge>
+            </div>
+          )}
           {!m.prerequisites.length && m.assessmentState !== 'unknown' && (
             <p className="muted">No prerequisites recorded.</p>
           )}

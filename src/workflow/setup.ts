@@ -199,7 +199,7 @@ function managedHooks(o: SetupOptions, bindingPath: string) {
           type: 'command',
           statusMessage: labels[event],
           command: `${o.helperNode ? shellQuote(o.helperNode) + ' ' : ''}${shellQuote(o.helper)} hook --binding ${shellQuote(bindingPath)}`,
-          timeout: 8,
+          timeout: event === 'Interrupt' ? 3 : 8,
         },
       ],
     },

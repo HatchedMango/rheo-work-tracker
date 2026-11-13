@@ -1,3 +1,4 @@
+import type { AssessmentCache } from './dependency-assessments.js';
 import type { Actor } from '../shared/contracts.js';
 import type { MapNode, WorkMap, MapEdge } from '../shared/work-map.js';
 import type { Node, HumanAction } from '../shared/oversight.js';
@@ -50,13 +51,14 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
       (SELECT count(*) FROM human_actions WHERE streamId IN (${placeholders(ids)})) + (SELECT count(*) FROM stream_context WHERE kind='question' AND needsHuman=1 AND streamId IN (${placeholders(ids)})) n`,
         )
         .get(...ids, ...ids, ...ids) as { n: number };
+      const assessmentCache: AssessmentCache = new Map();
       const nodeCache = new Map<string, MapNode>();
       function node(id: string, kind: MapNode['kind'], reference = false): MapNode {
         const cached = nodeCache.get(id);
         if (cached) return cached;
         let result: MapNode;
         if (kind === 'stream') {
-          const s = streams.get(actor, id);
+          const s = streams.get(actor, id, assessmentCache);
           result = {
             id,
             kind,
@@ -74,6 +76,7 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
                 : 'planned',
             quiet: ['closed', 'declined'].includes(s.state),
             assessment: s.assessmentState,
+            dependencyAssessment: s.dependencyAssessment,
             prerequisiteCount: s.dependencies.length,
             reference,
             conversationUrl: null,
@@ -96,7 +99,7 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
             lifecycle: string;
             assignment: string;
           };
-          const m = readTracking(store, id, streams.now());
+          const m = readTracking(store, id, streams.now(), assessmentCache);
           const unmet = m.prerequisites.filter((d) => !d.satisfied);
           const quiet =
             (m.progress === 'delivered' && w.lifecycle === 'open') ||
@@ -122,10 +125,8 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
                           : unmet.length && m.progress === 'review'
                             ? 'Waiting to deliver'
                             : m.progress === 'review'
-                              ? 'Ready'
-                              : m.assessmentState === 'current' && !unmet.length
-                                ? 'Ready'
-                                : 'Planned';
+                              ? 'In review'
+                              : 'Planned';
           result = {
             id,
             kind,
@@ -144,6 +145,7 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
                   : 'planned',
             quiet,
             assessment: m.assessmentState,
+            dependencyAssessment: m.dependencyAssessment,
             prerequisiteCount: m.prerequisites.length,
             reference,
             conversationUrl: null,
@@ -164,6 +166,7 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
             tone: q.state === 'open' ? 'attention' : 'quiet',
             quiet: q.state !== 'open',
             assessment: 'unknown',
+            dependencyAssessment: null,
             prerequisiteCount: 0,
             reference: false,
             conversationUrl: q.conversationUrl,
@@ -190,6 +193,7 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
             tone: ['done', 'cancelled'].includes(h.state) ? 'quiet' : 'attention',
             quiet: ['done', 'cancelled'].includes(h.state),
             assessment: 'unknown',
+            dependencyAssessment: null,
             prerequisiteCount: 0,
             reference,
             conversationUrl: h.conversationUrl,

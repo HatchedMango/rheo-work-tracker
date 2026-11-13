@@ -8,6 +8,7 @@ import {
   type SyncStatus,
 } from '../shared/sync.js';
 import { hash } from './auth.js';
+import { WORKFLOW_VERSION } from '../shared/streams.js';
 import { ensure } from './errors.js';
 import { allowFeedback } from './feedback.js';
 import type { OversightService } from './oversight.js';
@@ -21,6 +22,105 @@ export class SyncService {
   }
   get raw() {
     return this.work.store.raw;
+  }
+  compactContext(
+    a: Actor,
+    streamId: string | undefined,
+    changeId: string | undefined,
+    project: string,
+  ) {
+    // A refresh is explicitly incomplete: targeted current data, not a dependency review.
+    const stream = streamId ? this.streams.get(a, streamId) : null;
+    const change = changeId ? this.work.get(a, changeId) : null;
+    const clip = (value: string, bytes: number) => {
+      if (Buffer.byteLength(JSON.stringify(value)) <= bytes) return value;
+      let prefix = '',
+        used = 0;
+      for (const point of value) {
+        const width = Buffer.byteLength(JSON.stringify(point)) - 2;
+        if (used + width > bytes - 3) break;
+        prefix += point;
+        used += width;
+      }
+      return prefix + '…';
+    };
+    const questions = streamId
+      ? (this.raw
+          .prepare(
+            "SELECT id,revision,body,conversationUrl FROM stream_context WHERE streamId=? AND kind='question' AND needsHuman=1 AND state='open' ORDER BY updatedAt DESC,id LIMIT 4",
+          )
+          .all(streamId) as {
+          id: string;
+          revision: number;
+          body: string;
+          conversationUrl: string | null;
+        }[])
+      : [];
+    const actions = streamId
+      ? this.raw
+          .prepare(
+            "SELECT id,revision,title,state,conversationUrl FROM human_actions WHERE streamId=? AND state IN ('open','in_progress') ORDER BY updatedAt DESC,id LIMIT 4",
+          )
+          .all(streamId)
+      : [];
+    const refresh = {
+      mode: 'compact',
+      complete: false,
+      workflowVersion: WORKFLOW_VERSION,
+      project: clip(project, 500),
+      stream: stream
+        ? {
+            id: stream.id,
+            title: clip(stream.title, 180),
+            revision: stream.revision,
+            scopeRevision: stream.scopeRevision,
+            outcome: clip(stream.outcome, 500),
+            progressSummary: clip(stream.progressSummary, 500),
+            dependencyAssessment: {
+              state: stream.dependencyAssessment.state,
+              id: stream.dependencyAssessment.id,
+            },
+          }
+        : null,
+      change: change
+        ? {
+            id: change.id,
+            title: clip(change.title, 180),
+            objective: clip(change.objective, 500),
+            revision: change.tracking.revision,
+            planRevision: change.tracking.planRevision,
+            progress: change.tracking.progress,
+            note: clip(change.tracking.progressNote, 500),
+            dependencyAssessment: {
+              state: change.tracking.dependencyAssessment.state,
+              id: change.tracking.dependencyAssessment.id,
+            },
+            claim: change.tracking.claim
+              ? {
+                  id: change.tracking.claim.id,
+                  purpose: change.tracking.claim.purpose,
+                  state: change.tracking.claim.state,
+                  expiresAt: change.tracking.claim.expiresAt,
+                }
+              : null,
+          }
+        : null,
+      questions: questions.map((q) => ({ ...q, body: clip(q.body, 400) })),
+      actions: actions as unknown[],
+      requestsComplete: false,
+      trimmedForBudget: false,
+      recovery:
+        'Compact refresh only; request lists may be incomplete and text shortened. If scope/plan/assessment changed, or after interruption/resume/compaction/handoff, call get_stream_context for this selection and retrieve relevant full records/pages. This is not a complete dependency review. Reuse current reports only while current.',
+    };
+    while (
+      Buffer.byteLength(JSON.stringify(refresh)) > 8192 &&
+      (refresh.questions.length || refresh.actions.length)
+    ) {
+      if (refresh.actions.length) refresh.actions.pop();
+      else refresh.questions.pop();
+      refresh.trimmedForBudget = true;
+    }
+    return refresh;
   }
   session(a: Actor, sessionId: string) {
     this.streams.allow(a, ['agent']);
@@ -267,7 +367,14 @@ export class SyncService {
           .run(p.turnId, p.event, p.occurredAt, p.event, session.id);
       }
       const context = ['start', 'prompt', 'compact'].includes(p.event)
-        ? this.streams.context(a, { streamId, changeId: p.changeId, project: p.project, limit: 6 })
+        ? p.contextMode === 'compact' && p.event === 'prompt'
+          ? this.compactContext(a, streamId, p.changeId, p.project)
+          : this.streams.context(a, {
+              streamId,
+              changeId: p.changeId,
+              project: p.project,
+              limit: 6,
+            })
         : undefined;
       if (context && current)
         this.raw

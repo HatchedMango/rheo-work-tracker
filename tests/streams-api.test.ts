@@ -258,3 +258,77 @@ it('uses one attention count for mixed requests and enforces owner responses and
     store.close();
   }
 });
+
+it('enforces assessment scopes, strict report schemas and managed implementation claims over HTTP', async () => {
+  const store = openStore(':memory:'),
+    { app, auth } = await createApp(store, { origin: 'http://127.0.0.1:4310' }),
+    host = '127.0.0.1:4310';
+  try {
+    const token = auth.register('agent', 'Assessment API').secret,
+      worker = auth.register('worker', 'Worker').secret,
+      headers = { host, authorization: `Bearer ${token}` };
+    const post = (url: string, payload: unknown, h = headers) =>
+      app.inject({ method: 'POST', url, headers: h, payload: payload as Record<string, unknown> });
+    const w = (
+      await post('/api/work', { title: 'Assess this change', objective: 'Produce a useful output' })
+    ).json();
+    const target = { id: w.id, kind: 'change' };
+    expect(
+      (
+        await post(
+          '/api/dependencies/review',
+          { target },
+          { host, authorization: `Bearer ${worker}` },
+        )
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (await post('/api/dependencies/review', { target }, { host, authorization: '' })).statusCode,
+    ).toBe(403);
+    const read = await post('/api/dependencies/review', { target, limit: 100 });
+    expect(read.statusCode).toBe(200);
+    const r = read.json();
+    const p = {
+      target,
+      revision: r.revision,
+      scopeStreamId: r.scopeStreamId,
+      scopeFingerprint: r.scopeFingerprint,
+      planFingerprint: r.planFingerprint,
+      reviewedIds: r.items.map((i: { id: string }) => i.id),
+      coverage: 'complete',
+      start: { result: 'none', reason: 'Existing code is sufficient.' },
+      deliver: { result: 'none', reason: 'No prerequisite outputs are required.' },
+      idempotencyKey: 'report',
+    };
+    expect(
+      (await post('/api/dependencies/assess', { ...p, start: { result: 'none' } })).statusCode,
+    ).toBe(400);
+    expect((await post('/api/dependencies/assess', { ...p, actorName: 'Forged' })).statusCode).toBe(
+      400,
+    );
+    const saved = await post('/api/dependencies/assess', p);
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().actorName).toBe('Assessment API');
+    expect((await post('/api/dependencies/assess', p)).json().id).toBe(saved.json().id);
+    const detail = await app.inject({
+      url: `/api/dependency-assessment?id=${w.id}&kind=change`,
+      headers,
+    });
+    expect(detail.json().state).toBe('current');
+    const claim = await post(`/api/work/${w.id}/claims`, {
+      revision: saved.json().revision,
+      sessionId: crypto.randomUUID(),
+      token: crypto.randomUUID().replaceAll('-', ''),
+      purpose: 'implementation',
+    });
+    expect(claim.statusCode).toBe(200);
+    expect(claim.json().claim.purpose).toBe('implementation');
+    expect(
+      (await post('/api/dependencies/assess', { ...p, target: { id: w.id, kind: 'human_action' } }))
+        .statusCode,
+    ).toBe(400);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});

@@ -163,10 +163,12 @@ Schema migrations run transactionally on setup/startup, are recorded in `schema_
 
 See [architecture](docs/architecture.md), the [first-release implementation history](docs/implementation-plan.md), and the [streams and agent workflows plan](docs/streams-agent-workflow-plan.md).
 
-Version 0.6.0 / workflow 1.4.1 opens streams directly into a selectable work map/list, with recorded prerequisites, feeding streams and quieter delivered work. Tracking has no acceptance chores; human requests have optional chat links; see [usage and verification limits](docs/agent-workflow.md).
+Version 0.7.0 / workflow 1.5.0 adds explicit start/delivery dependency reports, scoped review, freshness checks and managed implementation preflight to the stream work map/list. Tracking has no acceptance chores; human requests have optional chat links; see [usage and verification limits](docs/agent-workflow.md).
 
 1. Real Codex and Claude Code session pilots, including resume/compaction and parallel handoffs.
 2. Refine the human view and bookkeeping from daily use.
 3. Optional independent MR status integrations and managed hosting after the personal workflow is useful. Execution adapters remain separate future work.
 
 No license has been selected, and no external service or remote repository has been configured.
+
+Agent loops reuse the same change and current approach across iterations. Workflow 1.6.0 provides compact prompt refreshes, durable checkpoint reminders and an explicit per-session observe mode for external runners. Work Inbox records progress and relationships; the runner owns execution and stopping. See [loop synchronization](docs/synchronization.md#external-loops-and-session-state).

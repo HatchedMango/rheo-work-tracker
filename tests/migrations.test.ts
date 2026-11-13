@@ -258,3 +258,65 @@ it('preserves every existing column and historical decision when adding simple t
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it('adds explicit assessment storage without rewriting old work, claims, credentials or legacy assessments', async () => {
+  const { createHash } = await import('node:crypto');
+  const { StreamService } = await import('../src/services/streams.js');
+  const dir = mkdtempSync(join(tmpdir(), 'work-inbox-assessment-migration-')),
+    path = join(dir, 'work.sqlite');
+  let store = openStore(path);
+  try {
+    const auth = new Auth(store),
+      agent = auth.actor(auth.register('agent', 'Existing source').secret, 'bearer'),
+      work = new WorkService(store),
+      streams = new StreamService(work);
+    const s = streams.submit(agent, {
+      title: 'Existing stream',
+      outcome: 'Existing goal',
+      idempotencyKey: 'existing',
+    });
+    const w = work.create(
+      agent,
+      createSchema.parse({
+        title: 'Existing change',
+        objective: 'Existing purpose',
+        streamId: s.id,
+      }),
+    );
+    streams.updateChange(agent, w.id, {
+      revision: 1,
+      assessDependencies: true,
+      assessmentFingerprint: w.tracking.assessmentFingerprint,
+    });
+    store.raw.exec('DROP TABLE implementation_claims; DROP TABLE dependency_assessments');
+    store.raw
+      .prepare('DELETE FROM schema_migrations WHERE name=?')
+      .run('0009_dependency_assessments.sql');
+    const names = (
+      store.raw
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='schema_migrations'",
+        )
+        .all() as { name: string }[]
+    ).map((x) => x.name);
+    const digest = (name: string) =>
+      createHash('sha256')
+        .update(
+          JSON.stringify(store.raw.prepare('SELECT * FROM "' + name + '" ORDER BY rowid').all()),
+        )
+        .digest('hex');
+    const before = new Map(names.map((n) => [n, digest(n)]));
+    store.close();
+    store = openStore(path);
+    for (const [name, hash] of before) expect(digest(name)).toBe(hash);
+    expect(store.raw.prepare('SELECT count(*) n FROM dependency_assessments').get()).toEqual({
+      n: 0,
+    });
+    expect(new WorkService(store).get(agent, w.id).tracking.dependencyAssessment.state).toBe(
+      'legacy',
+    );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

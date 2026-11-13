@@ -110,8 +110,9 @@ it('does not infer independence from missing or stale assessment and preserves d
     assessment: 'unknown',
   });
   expect(map.nodes.find((n) => n.id === assessed.id)).toMatchObject({
-    status: 'Ready',
+    status: 'Planned',
     assessment: 'current',
+    dependencyAssessment: { state: 'legacy' },
   });
   expect(map.nodes.find((n) => n.id === done.id)).toMatchObject({
     status: 'Delivered',

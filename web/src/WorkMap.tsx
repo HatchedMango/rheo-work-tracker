@@ -1,3 +1,5 @@
+import { DependencyAssessmentView } from './DependencyAssessment.js';
+import { relationshipLabel } from '../../src/shared/dependency-presentation.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ChevronRight, Hand, Layers, MessageCircle } from 'lucide-react';
 import {
@@ -242,6 +244,11 @@ export function StreamWorkMap({
           {n.reference && <small>Linked</small>}
         </span>
         <strong>{n.title}</strong>
+        {!n.quiet && n.dependencyAssessment && (
+          <small className="map-relationship-state" data-assessment={n.dependencyAssessment.state}>
+            {relationshipLabel(n.dependencyAssessment)}
+          </small>
+        )}
         {n.status === 'In progress' && unmet.length > 0 && (
           <span className="work-map-blocker">
             {unmet.some((e) => e.stage === 'start')
@@ -369,6 +376,14 @@ export function StreamWorkMap({
                   ) : (
                     <h4>{group.title}</h4>
                   )}
+                  {header?.dependencyAssessment && (
+                    <span
+                      className="map-relationship-state"
+                      data-assessment={header.dependencyAssessment.state}
+                    >
+                      {relationshipLabel(header.dependencyAssessment)}
+                    </span>
+                  )}
                   {parent && parent.id !== data.rootId && (
                     <span className="map-parent">Within {parent.title}</span>
                   )}
@@ -422,17 +437,9 @@ export function StreamWorkMap({
                 />
               </div>
             )}
-            {!['human_action', 'question'].includes(selected.kind) &&
-              !selected.quiet &&
-              selected.assessment !== 'current' && (
-                <p className="map-uncertainty">
-                  {selected.assessment === 'stale'
-                    ? 'Relationships need checking against newer work.'
-                    : incoming.length
-                      ? 'Recorded links have not been checked for completeness.'
-                      : 'Prerequisites have not been assessed.'}
-                </p>
-              )}
+            {selected.dependencyAssessment && (
+              <DependencyAssessmentView assessment={selected.dependencyAssessment} />
+            )}
             {incoming.length > 0 ? (
               <div className="map-relation-list">
                 <h4>Needs</h4>
@@ -450,16 +457,7 @@ export function StreamWorkMap({
                   </div>
                 ))}
               </div>
-            ) : (
-              !['human_action', 'question'].includes(selected.kind) &&
-              selected.assessment === 'current' && (
-                <p className="fine">
-                  {selected.prerequisiteCount
-                    ? 'Prerequisites are outside this view.'
-                    : 'No prerequisites were identified.'}
-                </p>
-              )
-            )}
+            ) : null}
             {outgoing.length > 0 && (
               <div className="map-relation-list">
                 <h4>Feeds into</h4>

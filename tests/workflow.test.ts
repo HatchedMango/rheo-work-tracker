@@ -99,6 +99,7 @@ it('merges Codex hook events without replacing other integrations and detects ch
   let cfg = JSON.parse(readFileSync(path, 'utf8'));
   expect(cfg.hooks.Stop).toHaveLength(2);
   expect(cfg.hooks.Interrupt).toHaveLength(1);
+  expect(cfg.hooks.Interrupt[0].hooks[0].timeout).toBe(3);
   expect(cfg.extra).toBe('preserve');
   workflowSetup('install', o);
   expect(JSON.parse(readFileSync(path, 'utf8')).hooks.Stop).toHaveLength(2);

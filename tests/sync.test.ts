@@ -328,3 +328,33 @@ it('retargets a native chat only through an explicit fresh context load and reje
     ),
   ).toThrow('Explicitly select');
 });
+it('keeps compact refreshes bounded and explicit about omitted context while legacy and recovery calls stay full', () => {
+  let s = stream();
+  s = streams.update(agent, s.id, {
+    revision: s.revision,
+    context: 'Full recovery approach and failed attempts.',
+    scope: { title: '😀'.repeat(80), outcome: '😀'.repeat(1800), constraints: '' },
+  });
+  for (let i = 0; i < 6; i++)
+    streams.recordContext(agent, s.id, {
+      kind: 'question',
+      body: `Question ${i}: ${'😀'.repeat(700)}`,
+      needsHuman: true,
+      idempotencyKey: randomUUID(),
+    });
+  const full = sync.event(agent, event(s.id));
+  expect(full.context).toHaveProperty('entries');
+  const compact = sync.event(
+    agent,
+    event(s.id, 'prompt', { contextMode: 'compact', turnId: 'next' }),
+  );
+  expect(compact.context).toMatchObject({ mode: 'compact', complete: false, stream: { id: s.id } });
+  expect(Buffer.byteLength(JSON.stringify(compact.context))).toBeLessThanOrEqual(8192);
+  expect(JSON.stringify(compact.context)).toContain('not a complete dependency review');
+  const recovered = sync.event(
+    agent,
+    event(s.id, 'compact', { contextMode: 'compact', turnId: 'next' }),
+  );
+  expect(recovered.context).toHaveProperty('entries');
+  expect(JSON.stringify(recovered.context)).toContain('Full recovery approach');
+});

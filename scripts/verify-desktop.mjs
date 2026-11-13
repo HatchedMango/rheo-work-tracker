@@ -263,6 +263,14 @@ try {
     await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
   );
   assert.equal(missingCheckpoint.decision, 'block');
+  const repeatedStop = JSON.parse(
+    await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
+  );
+  assert.equal(
+    repeatedStop.decision,
+    undefined,
+    'A new helper process must retain reminder suppression',
+  );
   const checkpointFile = join(temporary, 'checkpoint.json');
   writeFileSync(
     checkpointFile,
@@ -287,6 +295,32 @@ try {
     ),
     {},
   );
+  await workflow([
+    'mode',
+    '--binding',
+    binding,
+    '--session-id',
+    session.session_id,
+    '--stop-policy',
+    'observe',
+  ]);
+  const promptRefresh = JSON.parse(
+    await workflow(['hook', '--binding', binding], {
+      ...session,
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'runner-turn',
+    }),
+  );
+  assert(promptRefresh.hookSpecificOutput.additionalContext.includes('"mode":"compact"'));
+  const runnerStop = JSON.parse(
+    await workflow(['hook', '--binding', binding], {
+      ...session,
+      hook_event_name: 'Stop',
+      turn_id: 'runner-turn',
+    }),
+  );
+  assert.equal(runnerStop.decision, undefined);
+  assert.equal(runnerStop.continue, undefined);
   await workflow(['remove', ...workflowArgs]);
   assert.equal(
     readFileSync(join(project, 'CLAUDE.md'), 'utf8'),

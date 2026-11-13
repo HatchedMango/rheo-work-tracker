@@ -1,3 +1,4 @@
+import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { StreamWorkMap } from './WorkMap.js';
 import type { WorkMap } from '../../src/shared/work-map.js';
 import { conversationLink } from '../../src/shared/conversation.js';
@@ -340,7 +341,7 @@ export function Oversight({
               scope {s.coverage.scopeRevision}
             </p>
           )}
-          <p className="fine">Dependency assessment: {s.assessmentState}</p>
+          <DependencyAssessmentView assessment={s.dependencyAssessment} />
           {detail.sync.items.length > 0 && (
             <details className="sync-summary">
               <summary>

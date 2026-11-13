@@ -64,6 +64,7 @@ export const syncEventSchema = selectionSchema
     turnId: z.string().min(1).max(200),
     event: z.enum(['start', 'prompt', 'compact', 'stop', 'interrupt', 'checkpoint']),
     occurredAt: z.number().int().nonnegative(),
+    contextMode: z.enum(['full', 'compact']).optional(),
     checkpoint: z
       .object({
         summary: z.string().trim().min(1).max(3000),
