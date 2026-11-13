@@ -466,7 +466,7 @@ test('guided agent setup checks locally, verifies an actual MCP tool call, and d
     const identity = {
       sessionId: randomUUID(),
       client: 'codex',
-      project: resolve('.data/e2e'),
+      project: resolve('.data/e2e/a-long-project-path-' + 'nested-project/'.repeat(12)),
       streamId: tracked.id,
       turnId: randomUUID(),
     };

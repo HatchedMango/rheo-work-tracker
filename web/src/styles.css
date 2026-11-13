@@ -1366,6 +1366,7 @@ button svg {
   margin-left: 12px;
 }
 .connection-list p.fine {
+  overflow-wrap: anywhere;
   margin: 8px 0;
 }
 .connection-actions {
