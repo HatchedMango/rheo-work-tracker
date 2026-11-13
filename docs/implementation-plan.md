@@ -24,7 +24,7 @@ This version is useful for recording and managing real personal work. Its stub w
 
 ## Starting point
 
-- Repository directory: `/Users/you/dev/WorkInbox`.
+- Repository directory: the local `WorkInbox` checkout.
 - No existing application, dependencies, or Git repository were present during inspection. Only empty directories from initial exploration existed before this plan.
 - Installed runtime observed: Node 22.18.0 and npm 10.9.3.
 - Product direction: the supplied Agent-Native Work Inbox kickoff document, refined by the stack discussion in this chat.

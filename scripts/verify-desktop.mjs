@@ -150,6 +150,10 @@ async function verifyMcp(launch, expectedIds) {
         stderr: 'pipe',
       }),
     );
+    assert.equal(
+      client.getServerVersion()?.version,
+      JSON.parse(readFileSync('package.json', 'utf8')).version,
+    );
     const result = await client.callTool({ name: 'list_work', arguments: { view: 'all' } });
     assert(!result.isError, 'Packaged MCP list_work failed.');
     const listed = JSON.parse(result.content[0].text);

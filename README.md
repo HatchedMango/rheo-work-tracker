@@ -1,174 +1,110 @@
 # Work Inbox
 
-A local inbox for work arriving from agents and external workflows. Accept responsibility, clarify context, and review outcomes without losing the thread across agent sessions.
+Understand what your agents are working toward, how the work connects, and where they need you.
 
-This version supports external capture through MCP, streams, progress tracking, simple human requests, context edits, search, and manual completion. **No execution worker is connected yet.** Real agent execution is a future milestone; the app does not offer a run action. The simulation is retained only as an isolated test fixture.
+Work Inbox is a local Mac app with streams, a work map/list, explicit prerequisites, progress and simple human requests. Agents maintain shared context through MCP while you keep working in their usual chats. Routine changes do not need acceptance in the app. Work Inbox tracks coordination; it does not run coding agents.
 
-The proposed next phase is documented in the [streams and agent workflows plan](docs/streams-agent-workflow-plan.md): outcome-oriented streams, reviewable changes, durable agent context, and supported client setup. These capabilities are planned, not implemented yet.
+Current private trial: **0.8.1**, agent workflow **1.6.0**. The desktop target is **Apple Silicon, macOS 13 or newer**. Each Mac has its own inbox and agent connections; work does not synchronize between computers.
 
-## Start using it
+## Install on another Mac
 
-### Mac desktop app
+1. Download the Apple Silicon DMG and `SHA256SUMS` from this repository's prerelease, when published. Verify the downloaded file with `shasum -a 256` against its entry in `SHA256SUMS`.
+2. Open the DMG, drag **Work Inbox** into **Applications**, and open it from there. Node, npm and a checkout are not required for the app.
+3. In **Connections → Connect an agent**, copy the setup prompt into your agent on this Mac. Let it configure the local MCP entry, then verify with the connected `list_work` tool and finish the connection.
+4. Install the **Project workflow** from that connection's setup for a project and an explicitly selected stream/change. Review the client hooks and start a fresh chat if required. A connection alone does not install or verify lifecycle hooks.
 
-Open the Mac disk image, drag **Work Inbox** into **Applications**, and open it. The app bundles its runtime and database driver; Node, npm, and a repository checkout are not required. The menu-bar tray icon provides **Open Work Inbox**, **Launch at Login**, **Import Existing Data…**, **Restart Work Inbox**, and **Quit Work Inbox**.
+The current trial installer is **ad-hoc signed, not notarized**. A downloaded copy may be blocked by macOS or your organization's device policy. Build from source on that Mac if permitted, or wait for a Developer ID signed/notarized release; this project does not ask you to disable macOS protections.
 
-The interface opens in a dedicated **Work Inbox** window. Closing that window leaves the service running; reopen it from the Dock, Spotlight, or menu bar. **Quit Work Inbox** (⌘Q) stops the app and service. Launch at Login is optional and off until you enable it. Your computer must remain awake for local intake to be available. Documentation and reference links open in your normal browser; the local web interface also remains available at **http://127.0.0.1:4310**.
+The [second-Mac trial guide](docs/second-mac-trial.md) covers first use, agent checks, backups, updates and known limits. Create a fresh connection on the other Mac; keep this Mac's database, protected credentials and project binding here.
 
-Data and protected credentials live in `~/Library/Application Support/Work Inbox/data/`. The app can be replaced without replacing this folder. New MCP configurations use a stable launcher in `~/Library/Application Support/Work Inbox/bin/`; open Connections for the normal guided setup.
+## Everyday use
 
-To move from the development version, quit its server, then choose **Import Existing Data…** and select its `.data` folder (the picker shows hidden folders). Import requires an empty desktop installation, copies a consistent database snapshot and connection credentials, and leaves the originals intact. Existing agent configurations still work while their original launcher/credential paths exist. Use Connections → Setup to obtain the stable desktop configuration before removing the old checkout; client settings are never silently rewritten.
+- **Streams** shows goals, progress and the work map. Open a stream to see its changes and feeding streams without expanding another section. Map arrows describe recorded prerequisites; missing or stale assessments are visible.
+- **Needs you** contains actual questions and human actions. Answer in your agent chat; permitted agents can reconcile the exact request. A chat link is shown only when a supported reliable link exists.
+- **Changes** provides a closer view and history. Agent delivery is separate from human completion; a stopped chat, expired claim or passing check never completes work automatically.
+- **Connections** manages local agent access and project workflow setup. Connection verification is a successful client tool call, not continuous online presence or proof that hooks ran.
 
-The current build is for Apple Silicon. Local builds are ad-hoc signed; public downloads still require Developer ID signing and notarization. See [desktop packaging](docs/desktop.md) for building, verification, updates, and distribution limits.
+Close the window to leave local intake running. Reopen from the Dock, Spotlight or menu bar. **Quit Work Inbox** (⌘Q) stops the app and service. **Launch at Login** is optional. The Mac must be awake with Work Inbox running for agents to reach it.
 
-### Run from source
+Agents reuse a change and its current approach across implement/check/revise iterations. Explicit dependency reports distinguish assessed independence, prerequisites and uncertainty. Cooperative implementation claims check recorded readiness but do not grant execution permission. An external loop runner can use per-session observe mode, leaving continuation and stopping to that runner. See [agent workflow](docs/agent-workflow.md) and [synchronization](docs/synchronization.md).
 
-Requirements: Node **22.18 or newer** and npm. No database service or external account is needed. The SQLite driver has a native component; unsupported Node/platform combinations may require native build tooling.
+## Build from source
+
+Use the Node version in `.nvmrc` (**22.18.0**) and npm. SQLite includes a native component; a fresh installation may require compiler tools. Building the dedicated Mac app also requires Xcode Command Line Tools. From the checkout root:
 
 ```sh
-cd /Users/you/dev/WorkInbox
 npm ci
 npm run setup
 npm run build
 npm start
 ```
 
-Open **http://127.0.0.1:4310**. Your local workspace opens directly; no account, password, login link, or terminal step is needed to access it. Browser sessions are created and renewed automatically behind the scenes.
+Open **http://127.0.0.1:4310**. The source app opens in a browser with an automatic local session; no account or login is needed. Use `127.0.0.1`, rather than `localhost`, because host/origin checks are intentional. Quit the desktop app first if it already uses port 4310.
 
-The app is available on this computer only. Use `127.0.0.1`, not `localhost`, because the server validates its configured host and origin.
-
-The application does not insert sample tasks automatically. Work arrives through MCP or authenticated source clients. To try the flow without connecting an agent, explicitly import two labeled examples:
+For the dedicated Mac app:
 
 ```sh
-npm run demo
+npm run desktop:build
+npm run desktop:verify
 ```
 
-## Everyday workflow
+Install `release/Work Inbox.app` in Applications, or use the versioned DMG. Launch it once from its installed location before configuring MCP. See [desktop packaging](docs/desktop.md).
 
-1. Work with your agent in its usual chat. It records goals, changes, progress, and useful context through MCP.
-2. **Streams** shows what you are accomplishing and how the related work is progressing.
-3. **Needs you** shows only explicit questions or human actions. An optional **Open chat** link takes you back to the relevant conversation; answer there and let the agent keep the request in sync.
-4. **Changes → Active / History** provides a closer look when needed. Routine agent delivery moves to History without another acceptance step.
+For development, `npm run dev` starts the backend and Vite UI at **http://127.0.0.1:5173**. Do not run another instance on the same backend port. The application starts without sample work; `npm run demo` explicitly creates labeled examples for source testing.
 
-There is no accept/decline workflow or approval-coverage setup. Tracking and cooperative claims never authorize execution; agents still follow your instructions in chat. Idle work can be edited and manually completed under the collapsed management controls. Context edits and historical decisions retain their history.
+## Connect agents
 
-The UI has no work-creation form. New work comes from an external agent credential through MCP or the scoped API. Brief descriptions lead, with detailed Markdown, criteria, evidence and history available on demand. HTML stays escaped and remote images are not fetched.
+The app creates a separate revocable protected credential for each connection. Generated setup prompts/configurations contain its file path, never its secret value. The MCP companion starts through the client using a stable local launcher; no separate MCP daemon is needed. App and agent currently run on the same Mac.
 
-Requests may include a web chat URL or a local Codex existing-chat link. Links are validated and open only when clicked; no supported URL means no link. Local links require the matching app and chat on that computer. Claude Code terminal sessions do not have a guaranteed clickable chat URL; an agent should omit it rather than guess.
+The connection wizard preserves unfinished setup while it is open. Finish after a successful connected client tool call; cancelling a new setup revokes its draft credential. Disconnecting revokes access immediately; remove the corresponding server entry from the client afterward.
 
-## Execution
+**Check local setup** is a diagnostic, not client verification. Project setup installs managed instructions, skills and supported lifecycle hooks without replacing unrelated settings. Generated bindings contain local paths and selection, stay out of Git, and must be recreated on each machine. New tool schemas may require reloading the MCP connection or starting a new chat.
 
-Connections shows **No execution worker connected**. This accurately reflects the current implementation: there is no real coding-agent adapter. Tracking, human requests, notes, and manual completion work independently of an execution worker.
-
-The old simulation process has been stopped, its credential revoked, and its normal pairing/start commands removed. Simulation code lives under `tests/fixtures/` and is excluded from the production build. The normal API rejects run approvals, worker claims, and worker updates until real execution is implemented. Tests explicitly opt into a simulation-enabled application instance; the production entry point does not expose that option through environment variables or HTTP.
-
-## Connect an agent
-
-Open **Connections → Connect an agent**. The guided setup handles credential creation and configuration:
-
-1. Choose **Codex**, **Claude Desktop**, or **Other MCP client**, and optionally name the connection.
-2. Copy the generated **setup prompt** into an agent with local configuration access. The prompt includes the exact launcher/configuration, asks it to preserve existing settings, and tells it to verify through the connected tool. No credential secret is included.
-3. If the agent cannot update local settings, expand **Manual setup** for the client-specific command/configuration. After any required restart, ask the agent: **“Use Work Inbox to list my work.”**
-4. After a successful agent tool call, click **Finish connection**. Only completed connections appear in the list. A local setup check alone cannot finish setup.
-
-Refreshing resumes your unfinished setup. Cancelling or closing a new setup revokes its credential and discards the draft; it does not leave an entry in Connections. Existing completed connections are preserved when their setup dialog is closed.
-
-Work Inbox must stay running. The agent launches the stdio MCP companion itself; you do not start a separate MCP daemon manually. App and agent currently run on the same computer.
-
-Each connection gets its own revocable agent credential. **Setup** reopens its configuration, and **Disconnect** revokes its access immediately. After disconnecting, remove the corresponding server entry from the client to stop launch attempts. Existing client configuration is never edited or replaced by Work Inbox.
-
-**Having trouble? → Check local setup** launches the actual companion with that credential and checks its tools/API access. This is a local diagnostic, not evidence that your chosen agent is configured. It does not mark the agent verified or create a sample work item. Connection status records successful use, not continuous online presence.
-
-Client setup follows [official OpenAI MCP documentation](https://developers.openai.com/codex/mcp) and the [official local MCP/Claude Desktop guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers). The generic option provides stdio settings in `mcpServers` JSON format; adapt the enclosing structure for clients with another schema.
-
-### Advanced CLI setup
-
-The original `npm run mcp:credential` command remains available for scripted setup. It writes `.data/agent.json`; configure a client to launch the absolute `dist/mcp/index.js` path with the absolute Node executable and `WORK_INBOX_CREDENTIAL_FILE` pointing at that file. CLI-created credentials remain usable but do not appear as managed connections in the guided flow. Use the UI for per-client setup and verification.
-
-The original tools remain available. See [streams and agent workflow](docs/agent-workflow.md) for stream intake, dependencies, outputs, cooperative claims, bounded context, and project setup.
-
-Tools:
-
-- `create_work`: title, objective, optional criteria/priority/references/idempotencyKey. Always submits to Inbox for your decision. Legacy `destination` fields are ignored by the server.
-- `list_work`: optional view, status, q, limit (1–100), and offset. `active` includes open/blocked work excluding reported-delivered changes; `history` includes reported delivery and completed/cancelled work. Reported delivery is separate from owner completion. `status` filters the current display state before counting/pagination. Legacy views remain supported for existing clients.
-- `get_work`: work UUID; returns context, up to 50 recent runs, and 300 recent events.
-- `add_work_update`: work UUID, message, and optional references.
-
-Example `create_work` arguments:
-
-```json
-{
-  "title": "Refactor date picker later",
-  "objective": "Follow up on the date parsing duplication discovered during the current task.",
-  "idempotencyKey": "date-picker-follow-up-1",
-  "references": [{ "system": "context", "url": "https://example.com/context" }]
-}
-```
-
-Agent credentials cannot accept assignments, approve execution, claim execution jobs, review results, or complete work. Cooperative change claims are separate bookkeeping and grant no execution authority. Notes and task content never become execution authority. To run the source stdio server manually, use `npm run --silent mcp`; do not use a wrapper that writes npm banners to stdout in your MCP client.
-
-## Credentials and configuration
+Advanced source commands:
 
 ```sh
-npm run credentials             # IDs/scopes only; no secret values
-npm run revoke -- CREDENTIAL_ID # revoke a worker or agent credential
+npm run mcp:credential          # write a protected source credential file
+npm run credentials             # show IDs/scopes, not secret values
+npm run revoke -- CREDENTIAL_ID
 ```
 
-Issuing an agent credential again writes a new credential file and identity; it does not silently revoke older credentials. Revoke the prior ID if replacing an agent. Credential files are local secrets; task payloads never contain them.
+For source MCP setup, use the absolute Node executable and `dist/mcp/index.js`, with `WORK_INBOX_CREDENTIAL_FILE` referencing the generated protected file. `npm run --silent mcp` is suitable for direct stdio use; avoid npm banners on a client's protocol stream. CLI-created credentials remain usable but do not become guided UI connections.
 
-Environment:
+Agent tools include work capture, stream/context retrieval, explicit dependency review/reporting, progress/output reporting, cooperative claims and checkpoints. Agents cannot grant execution authority or declare human completion. Question/action chat feedback is separately opt-in per connection. See [the maintained workflow](docs/agent-workflow.md) for contracts and [human presentation](docs/human-presentation.md) for wording.
 
-| Variable                     | Default                                                                         | Purpose                               |
-| ---------------------------- | ------------------------------------------------------------------------------- | ------------------------------------- |
-| `WORK_INBOX_DATA_DIR`        | `.data` relative to working directory                                           | Database and CLI credential directory |
-| `PORT`                       | `4310`                                                                          | Loopback application port             |
-| `WORK_INBOX_CREDENTIAL_FILE` | UI: `.data/connections/`; CLI: `.data/agent.json`; tests: explicit fixture file | Worker/MCP credential file            |
+## Data, backup and updates
 
-Use the same data-directory/port settings for setup and the server. If changing the port, reissue agent files for the new server URL. Existing agent credential files retain their original URL. Always start commands from the project root unless setting absolute paths.
+Desktop data and protected credentials: `~/Library/Application Support/Work Inbox/data/`. Source data: `.data/` in the checkout, unless `WORK_INBOX_DATA_DIR` selects another directory. Logs and stable desktop launchers live outside the app bundle under the same Application Support root.
 
-Local state is excluded from Git and initialized with restrictive directory/database permissions. The browser automatically obtains an HttpOnly/SameSite session cookie through a same-origin JSON request. Session creation and browser writes require an exact trusted Origin; cross-site API requests and untrusted same-site requests are rejected. Data endpoints still require a session or a scoped worker/agent credential. Expired or cleared browser cookies renew silently. These controls isolate the API from other websites; they are not account authentication or protection from processes running as your local user. Server logs redact authentication headers/cookies.
+For a manual desktop backup, quit Work Inbox and copy the **entire data directory** to a private location. For source use, stop the server and copy the entire `.data` directory. A live SQLite file alone may omit WAL contents. Backups include private work and credentials; keep them outside Git and shared artifacts.
 
-This is a single-owner, loopback-only release, not a multi-tenant or publicly deployable service. It has workspace/visibility fields for future evolution but no team access model, HTTPS hosting, external accounts, repository permissions, or production operations. Do not expose its port through a public proxy.
+To update, back up, quit the app, replace its bundle in Applications, and reopen it. Data and connections remain outside the bundle; the stable launcher pointer is refreshed. Migrations run on startup. Database downgrades are unsupported: a rollback needs the previous app **and its matching stopped-data backup**. The [trial guide](docs/second-mac-trial.md) gives restore steps.
 
-Workflow synchronization, lifecycle hook setup, chat response permissions and pending-write recovery are documented in [synchronization](docs/synchronization.md).
+To import source data into an empty desktop installation, quit the source server, choose **Import Existing Data…** and select its `.data` folder. Import preserves originals and refuses to overwrite populated desktop data. Obtain the stable desktop configuration through Connections before removing an old checkout/runtime. This is a local migration feature, not cross-Mac synchronization.
 
-## Development and checks
+| Variable                     | Source default     | Purpose                                     |
+| ---------------------------- | ------------------ | ------------------------------------------- |
+| `WORK_INBOX_DATA_DIR`        | `.data`            | Database and source credential directory    |
+| `PORT`                       | `4310`             | Loopback server port                        |
+| `WORK_INBOX_CREDENTIAL_FILE` | explicit file path | MCP credential; keep its contents protected |
+
+Use matching data/port settings for setup and server commands. Existing credential files retain their original URL; create replacement credentials if changing the port. The service binds to loopback and validates origins, sessions and credential scope. HTML is escaped and remote images in work content are not fetched. The execution simulation exists only in isolated tests.
+
+## Checks and releases
 
 ```sh
-npm run dev           # Fastify :4310 and Vite :5173
+npm run repo:check -- --history
+npm run format:check
 npm run typecheck
-npm test              # services, HTTP boundaries, worker rules, actual MCP stdio/HTTP integration
-npm run build
-npx playwright install chromium  # once for browser tests
-npm run test:e2e       # built UI, isolated test server/simulation fixture, desktop/mobile
-npm audit
+npm test
+npx playwright install chromium
+npm run test:e2e
 ```
 
-For development, open `http://127.0.0.1:5173` directly. The Vite API proxy forwards to :4310; automatic browser access works on both supported origins. The standard development configuration uses these ports; custom development ports require matching proxy/origin configuration.
+Tests use isolated data and ports; they do not seed the personal inbox. Keep traces/logs private because temporary session data may appear in failure diagnostics. To audit secret content, install Gitleaks and run `gitleaks git --redact=100 --log-opts=--all .`; the repository path check complements that scan rather than replacing it.
 
-Guided connection setup stores only credential-file paths in client configuration. The actual files are permission-restricted; connection management routes require the local owner. Agent telemetry is tied to its authenticated credential, so one connection cannot verify another.
+GitHub **Checks** runs source checks and browser tests. **Mac trial package** is manually dispatched and verifies an Apple Silicon package before retaining installer files, checksums and build metadata as private workflow artifacts. Neither workflow publishes a release automatically. See [publishing steps](docs/publish-private-trial.md), [private release preparation](docs/private-mac-trial-plan.md) and the [trial guide](docs/second-mac-trial.md).
 
-Tests isolate application data. Browser tests use a fresh temporary database and protected test credentials under `.data/e2e`, with a separate server on :4318. They never seed `.data/work.sqlite`. The test server and worker shut down afterward. Screenshots/traces are in ignored `test-results/`; a failed test's trace can contain its temporary session information.
+The project license remains undecided; no open-source license is granted by this private trial. Dependency/runtime notices are included in the Mac bundle. Choose the project's license before public distribution.
 
-## Backup and recovery
-
-Persistent state lives in `.data/work.sqlite`; SQLite can also create adjacent `-wal` and `-shm` files. CLI credential files live alongside it; guided agent credentials live under `.data/connections/`.
-
-For a simple consistent backup, stop the application, then copy the **entire `.data` directory** to a private location outside the repository. Protect that backup: it includes credential files and private task content. Never copy just a live database file and assume it includes uncheckpointed WAL data.
-
-To restore, stop the application, replace the data directory with the complete backup, then start the application. Review interrupted runs and approve retries deliberately. Opening the app automatically restores browser access. To replace a lost agent credential, issue a new one and revoke the old credential ID.
-
-Schema migrations run transactionally on setup/startup, are recorded in `schema_migrations`, and can be run repeatedly. New schema changes require a new versioned SQL migration plus corresponding Drizzle schema changes; do not edit an applied migration.
-
-## Architecture and next steps
-
-See [architecture](docs/architecture.md), the [first-release implementation history](docs/implementation-plan.md), and the [streams and agent workflows plan](docs/streams-agent-workflow-plan.md).
-
-Version 0.7.0 / workflow 1.5.0 adds explicit start/delivery dependency reports, scoped review, freshness checks and managed implementation preflight to the stream work map/list. Tracking has no acceptance chores; human requests have optional chat links; see [usage and verification limits](docs/agent-workflow.md).
-
-1. Real Codex and Claude Code session pilots, including resume/compaction and parallel handoffs.
-2. Refine the human view and bookkeeping from daily use.
-3. Optional independent MR status integrations and managed hosting after the personal workflow is useful. Execution adapters remain separate future work.
-
-No license has been selected, and no external service or remote repository has been configured.
-
-Agent loops reuse the same change and current approach across iterations. Workflow 1.6.0 provides compact prompt refreshes, durable checkpoint reminders and an explicit per-session observe mode for external runners. Work Inbox records progress and relationships; the runner owns execution and stopping. See [loop synchronization](docs/synchronization.md#external-loops-and-session-state).
+Architecture and historical plans are in [docs/architecture.md](docs/architecture.md). Historical verification notes describe observations at their original versions; independent second-machine behavior, actual Codex/Claude automatic hooks and notarization are not certified by local helper/packaging tests.

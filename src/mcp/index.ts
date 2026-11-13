@@ -4,6 +4,7 @@ import * as o from '../shared/oversight.js';
 import { syncEventSchema } from '../shared/sync.js';
 import { SyncOutbox } from '../workflow/outbox.js';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -15,7 +16,11 @@ const request = apiClient(
   { diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1' },
 );
 const server = new McpServer(
-  { name: 'work-inbox', version: '0.7.0' },
+  {
+    name: 'work-inbox',
+    version: JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
+      .version,
+  },
   { instructions: c.workflowInstructions },
 );
 async function report(activity: { kind: string; tool?: string }) {

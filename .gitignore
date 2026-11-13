@@ -9,3 +9,18 @@ test-results/
 playwright-report/
 *.sqlite*
 .DS_Store
+
+# Local Work Inbox workflow setup (paths and selection belong to this Mac).
+/.work-inbox/
+/.agents/skills/work-inbox/
+/.claude/skills/work-inbox/
+/AGENTS.md
+/CLAUDE.md
+/.codex/hooks.json
+/.claude/settings.local.json
+
+# Private local exports and diagnostics.
+/backups/
+*.log
+*.pem
+*.key

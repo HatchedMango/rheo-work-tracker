@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -36,6 +36,9 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
         },
         stderr: 'pipe',
       }),
+    );
+    expect(client.getServerVersion()?.version).toBe(
+      JSON.parse(readFileSync('package.json', 'utf8')).version,
     );
     const tools = (await client.listTools()).tools;
     expect(tools.map((t) => t.name)).toEqual(

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   cpSync,
   existsSync,
@@ -21,6 +22,8 @@ const runtime = join(resources, 'runtime');
 const payload = join(resources, 'app');
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+if (!/^\d+\.\d+\.\d+$/.test(pkg.version))
+  throw new Error('Mac bundle versions must be numeric major.minor.patch.');
 rmSync(app, { recursive: true, force: true });
 mkdirSync(join(contents, 'MacOS'), { recursive: true });
 mkdirSync(runtime, { recursive: true });
@@ -37,6 +40,38 @@ writeFileSync(
   join(payload, 'package.json'),
   JSON.stringify({ name: pkg.name, version: pkg.version, type: 'module' }),
 );
+let sourceCommit = null,
+  sourceDirty = null;
+try {
+  sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+  sourceDirty = !!execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'], {
+    encoding: 'utf8',
+  }).trim();
+} catch {
+  /* Archive builds cannot attest a Git revision. */
+}
+const buildInfo = {
+  version: pkg.version,
+  workflowVersion: /WORKFLOW_VERSION = '([^']+)'/.exec(
+    readFileSync('src/shared/streams.ts', 'utf8'),
+  )?.[1],
+  sourceCommit,
+  sourceDirty,
+  node: process.version,
+  platform: process.platform,
+  architecture: process.arch,
+  minimumMacOS: '13.0',
+  builtAt: new Date().toISOString(),
+  signing:
+    process.env.MAC_SIGNING_IDENTITY && process.env.MAC_SIGNING_IDENTITY !== '-'
+      ? 'identity-signed'
+      : 'ad-hoc',
+  notarized: false,
+};
+writeFileSync(join(resources, 'BUILD_INFO.json'), JSON.stringify(buildInfo, null, 2) + '\n');
 const dependencies = [];
 for (const [path, info] of Object.entries(lock.packages)) {
   if (!path.startsWith('node_modules/') || !existsSync(path)) continue;
@@ -133,7 +168,7 @@ for (const binary of [...native, join(runtime, 'node')]) {
 }
 run('/usr/bin/codesign', ['--force', '--sign', identity, ...signing, app]);
 run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
-const archive = join(root, `Work-Inbox-macOS-${process.arch}.zip`);
+const archive = join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.zip`);
 rmSync(archive, { force: true });
 run('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, archive]);
 if (!process.argv.includes('--no-dmg')) {
@@ -142,7 +177,7 @@ if (!process.argv.includes('--no-dmg')) {
   mkdirSync(staging);
   cpSync(app, join(staging, 'Work Inbox.app'), { recursive: true });
   run('/bin/ln', ['-s', '/Applications', join(staging, 'Applications')]);
-  const image = join(root, `Work-Inbox-macOS-${process.arch}.dmg`);
+  const image = join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.dmg`);
   rmSync(image, { force: true });
   run('/usr/bin/hdiutil', [
     'create',
@@ -156,6 +191,24 @@ if (!process.argv.includes('--no-dmg')) {
   ]);
   rmSync(staging, { recursive: true, force: true });
 }
+const metadata = join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.build.json`);
+writeFileSync(metadata, JSON.stringify(buildInfo, null, 2) + '\n');
+const assets = [
+  archive,
+  metadata,
+  ...(process.argv.includes('--no-dmg')
+    ? []
+    : [join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.dmg`)]),
+];
+writeFileSync(
+  join(root, 'SHA256SUMS'),
+  assets
+    .map(
+      (path) =>
+        `${createHash('sha256').update(readFileSync(path)).digest('hex')}  ${path.slice(root.length + 1)}`,
+    )
+    .join('\n') + '\n',
+);
 console.log(
   `Built ${app} with Node ${process.version} and ${native.length} native SQLite addon(s).`,
 );

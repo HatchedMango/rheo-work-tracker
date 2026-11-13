@@ -1,6 +1,6 @@
 {
   "name": "work-inbox",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,6 +17,8 @@
     "start": "NODE_ENV=production node dist/server/index.js",
     "desktop:build": "npm run build && node scripts/package-desktop.mjs",
     "desktop:verify": "node scripts/verify-desktop.mjs",
+    "repo:check": "node scripts/check-repository.mjs",
+    "release:check": "node scripts/check-release.mjs",
     "mcp": "tsx src/mcp/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

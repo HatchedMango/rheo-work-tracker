@@ -9,3 +9,6 @@ package-lock.json
 .work-inbox
 .agents
 AGENTS.md
+
+.claude
+CLAUDE.md
