@@ -7,11 +7,11 @@ The intended first repository is `HatchedMango/WorkInbox`, **private**. The conn
 On this Mac, sign the GitHub CLI into the intended account:
 
 ```sh
-gh auth login --hostname github.com --git-protocol https --web
+gh auth login --hostname github.com --git-protocol https --web --scopes workflow
 gh auth status
 ```
 
-Complete the browser/device authorization yourself. If GitHub proposes permissions or account changes beyond what you intend, stop rather than accepting them automatically. Do not paste tokens into this repository or chat.
+Complete the browser/device authorization yourself. The additional `workflow` scope is needed to push the prepared GitHub Actions workflow files; review the requested repository/workflow access in that authorization. If GitHub proposes permissions or account changes beyond what you intend, stop rather than accepting them automatically. Do not paste tokens into this repository or chat.
 
 After authentication, first check whether the intended repository already exists:
 
