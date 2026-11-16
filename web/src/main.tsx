@@ -1,3 +1,6 @@
+import { StartWork } from './StartWork.js';
+import { DailyProgress } from './DailyProgress.js';
+import { Sessions } from './Sessions.js';
 import { StatusBadge, WorkerStatus } from './UI.js';
 import { Oversight } from './Oversight.js';
 import { ChangeTrackingView } from './Streams.js';
@@ -385,6 +388,7 @@ function App() {
             Connections
           </button>
         </nav>
+        <DailyProgress request={api} />
         {status?.workers.some((worker) => worker.online) && (
           <div className="sidebar-note">
             <WorkerStatus workers={status.workers} />
@@ -617,6 +621,10 @@ function App() {
                         )}
                       </div>
                       <h2 className="detail-title">{detail.title}</h2>
+                      {detail.lifecycle === 'open' && !detail.tracking.deliveredAt && (
+                        <StartWork id={detail.id} request={api} />
+                      )}
+                      <Sessions request={api} changeId={detail.id} />
                       {detail.lifecycle === 'open' && (
                         <details
                           className="action-panel"

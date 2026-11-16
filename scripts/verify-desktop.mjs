@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import {
   mkdtempSync,
@@ -25,6 +25,27 @@ import { ConnectionService } from '../dist/services/connections.js';
 import { createSchema } from '../dist/shared/contracts.js';
 
 if (process.platform !== 'darwin') throw new Error('Run desktop verification on macOS.');
+// Exercise the exact native navigation validator, including the narrow unsent-draft route.
+const nativeValidator = readFileSync('desktop/InboxWindow.swift', 'utf8').split(
+  '// Only the loopback application',
+)[0];
+execFileSync(
+  '/usr/bin/swift',
+  [
+    '-e',
+    nativeValidator +
+      `
+let valid = "codex://new?prompt=Start%20this%20work&path=%2Ftmp"
+assert(allowedChatDestination(URL(string:valid)!))
+assert(allowedChatDestination(URL(string:"codex://threads/00000000-0000-4000-8000-000000000000")!))
+for rejected in ["codex://settings", "codex://new?prompt=x&path=relative", "codex://new?prompt=x&path=%2Ftmp&command=run", "codex://new?prompt=x&prompt=y", "codex://new?prompt=x&path=%2Ftmp#run", "codex://threads/00000000-0000-4000-8000-000000000000?prompt=run"] {
+ assert(!allowedChatDestination(URL(string:rejected)!))
+}
+`,
+  ],
+  { stdio: 'pipe' },
+);
+console.log('PASS: native existing-chat and unsent-draft allowlist rejects other routes.');
 const app = resolve('release/Work Inbox.app');
 assert(existsSync(app), 'Build the desktop app first.');
 const temporary = mkdtempSync(join(tmpdir(), "Work Inbox's verification "));

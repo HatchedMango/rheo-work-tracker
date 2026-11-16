@@ -5,7 +5,109 @@ import { join } from 'node:path';
 import { openStore } from '../src/db/index.js';
 import { Auth } from '../src/services/auth.js';
 import { WorkService } from '../src/services/work.js';
+import { StreamService } from '../src/services/streams.js';
 import { createSchema, listSchema, type Actor } from '../src/shared/contracts.js';
+
+it('adds daily progress preferences without rewriting existing work or inventing completions', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'work-inbox-daily-progress-migration-'));
+  const path = join(dir, 'work.sqlite');
+  let store = openStore(path);
+  try {
+    const auth = new Auth(store);
+    const agent = auth.actor(auth.register('agent', 'Existing agent').secret, 'bearer');
+    new WorkService(store).create(
+      agent,
+      createSchema.parse({ title: 'Existing work', objective: 'Keep this work' }),
+    );
+    const tables = (
+      store.raw
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations','daily_progress_preferences','change_completions')",
+        )
+        .all() as { name: string }[]
+    ).map(({ name }) => name);
+    const rows = (name: string) => store.raw.prepare('SELECT * FROM "' + name + '"').all();
+    const before = tables.map((name) => ({ name, rows: rows(name) }));
+    store.raw.exec(
+      'DROP TRIGGER change_first_delivery; DROP TRIGGER change_inserted_delivery; DROP TRIGGER change_first_manual_completion; DROP TABLE daily_progress_preferences; DROP TABLE change_completions',
+    );
+    store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0012_daily_progress.sql');
+    store.close();
+    store = openStore(path);
+    for (const prior of before) expect(rows(prior.name)).toEqual(prior.rows);
+    expect(rows('daily_progress_preferences')).toEqual([{ id: 'local', target: 5, revision: 1 }]);
+    expect(rows('change_completions')).toEqual([]);
+    expect(store.raw.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('backfills the earliest known delivery/completion, including reopened history, without inventing dates', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'work-inbox-completion-history-')),
+    path = join(dir, 'work.sqlite');
+  let store = openStore(path),
+    now = Date.parse('2026-11-15T15:00:00Z');
+  try {
+    const auth = new Auth(store),
+      agent = auth.actor(auth.register('agent', 'Existing agent').secret, 'bearer');
+    const owner: Actor = { id: 'owner', scope: 'owner', ownerId: 'owner' },
+      work = new WorkService(store, () => now),
+      streams = new StreamService(work);
+    const create = (title: string) =>
+      work.create(agent, createSchema.parse({ title, objective: title }));
+    const repeated = create('Repeated delivery'),
+      reopened = create('Reopened'),
+      fallback = create('Known legacy date'),
+      manual = create('Manual completion'),
+      unknown = create('Unknown date');
+    const report = (id: string, progress: 'delivered' | 'working') =>
+      streams.updateChange(agent, id, {
+        revision: work.get(agent, id).tracking.revision,
+        progress,
+        progressNote: 'Update with a reason.',
+      });
+    report(repeated.id, 'delivered');
+    // Simulate legacy delivery metadata without an original delivery event.
+    store.raw.prepare('UPDATE change_meta SET deliveredAt=? WHERE workId=?').run(now, reopened.id);
+    const first = now;
+    now = Date.parse('2026-11-16T16:00:00Z');
+    report(repeated.id, 'working');
+    report(repeated.id, 'delivered');
+    report(reopened.id, 'working');
+    store.raw.prepare('UPDATE change_meta SET deliveredAt=? WHERE workId=?').run(now, fallback.id);
+    work.action(owner, manual.id, { action: 'complete', revision: manual.revision, message: '' });
+    store.raw
+      .prepare("UPDATE work SET lifecycle='completed',updatedAt=? WHERE id=?")
+      .run(now, unknown.id);
+    const original = store.raw.prepare('SELECT id,lifecycle,updatedAt FROM work ORDER BY id').all();
+    store.raw.exec(
+      'DROP TRIGGER change_first_delivery; DROP TRIGGER change_inserted_delivery; DROP TRIGGER change_first_manual_completion; DROP TABLE change_completions; DROP TABLE daily_progress_preferences',
+    );
+    store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0012_daily_progress.sql');
+    store.close();
+    store = openStore(path);
+    const rows = store.raw.prepare('SELECT workId,completedAt FROM change_completions').all();
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { workId: repeated.id, completedAt: first },
+        { workId: reopened.id, completedAt: first },
+        { workId: fallback.id, completedAt: now },
+        { workId: manual.id, completedAt: now },
+      ]),
+    );
+    expect(rows).toHaveLength(4);
+    expect(rows.some((row) => (row as { workId: string }).workId === unknown.id)).toBe(false);
+    expect(store.raw.prepare('SELECT id,lifecycle,updatedAt FROM work ORDER BY id').all()).toEqual(
+      original,
+    );
+    expect(store.raw.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 it('recovers legacy undecided intake once while preserving decisions, closed work, and history', () => {
   const dir = mkdtempSync(join(tmpdir(), 'work-inbox-migration-'));
@@ -127,6 +229,9 @@ it('adds unknown, ungrouped tracking to legacy work without changing IDs, creden
     store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0005_streams.sql');
     store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0006_oversight.sql');
     store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0008_simple_tracking.sql');
+    store.raw
+      .prepare('DELETE FROM schema_migrations WHERE name=?')
+      .run('0011_request_guidance.sql');
     store.close();
     store = openStore(path);
     const after = new WorkService(store).get(owner, old.id);
@@ -315,6 +420,126 @@ it('adds explicit assessment storage without rewriting old work, claims, credent
     expect(new WorkService(store).get(agent, w.id).tracking.dependencyAssessment.state).toBe(
       'legacy',
     );
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('backfills only known session selections and preserves legacy sessions and checkpoint history across reopen', async () => {
+  const { SyncService } = await import('../src/services/sync.js');
+  const { StreamService } = await import('../src/services/streams.js');
+  const { OversightService } = await import('../src/services/oversight.js');
+  const { randomUUID } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'work-inbox-session-migration-')),
+    path = join(dir, 'db.sqlite');
+  let store = openStore(path);
+  try {
+    const auth = new Auth(store),
+      agent = auth.actor(auth.register('agent', 'Existing client').secret, 'bearer');
+    const streams = new StreamService(new WorkService(store));
+    const sync = new SyncService(new OversightService(streams));
+    const s = streams.submit(agent, {
+      title: 'Existing stream',
+      outcome: 'Keep work',
+      idempotencyKey: randomUUID(),
+    });
+    const base = {
+      sessionId: randomUUID(),
+      client: 'claude-code' as const,
+      project: '/existing',
+      streamId: s.id,
+      turnId: 'one',
+    };
+    sync.event(agent, { ...base, eventId: randomUUID(), event: 'start', occurredAt: Date.now() });
+    sync.event(agent, {
+      ...base,
+      eventId: randomUUID(),
+      event: 'checkpoint',
+      occurredAt: Date.now(),
+      checkpoint: { summary: 'Existing handoff' },
+    });
+    const old = store.raw.prepare('SELECT * FROM workflow_sessions').all();
+    const history = store.raw.prepare('SELECT * FROM stream_events ORDER BY id').all();
+    store.raw.exec('DROP TABLE session_work');
+    store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0010_session_work.sql');
+    store.close();
+    store = openStore(path);
+    expect(store.raw.prepare('SELECT * FROM workflow_sessions').all()).toEqual(old);
+    expect(store.raw.prepare('SELECT * FROM stream_events ORDER BY id').all()).toEqual(history);
+    const row = store.raw.prepare('SELECT * FROM session_work').get() as Record<string, unknown>;
+    expect(row).toMatchObject({ summary: 'Existing handoff', streamId: s.id, changeId: null });
+    expect(row.firstSeenAt).toBe(row.lastSeenAt);
+    store.close();
+    store = openStore(path);
+    expect(store.raw.prepare('SELECT * FROM session_work').all()).toEqual([row]);
+    expect(store.raw.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('adds empty request guidance without rewriting legacy request content, state or identities', async () => {
+  const { StreamService } = await import('../src/services/streams.js');
+  const { OversightService } = await import('../src/services/oversight.js');
+  const { randomUUID } = await import('node:crypto');
+  const dir = mkdtempSync(join(tmpdir(), 'work-inbox-request-migration-')),
+    path = join(dir, 'db.sqlite');
+  let store = openStore(path);
+  try {
+    const auth = new Auth(store),
+      agent = auth.actor(auth.register('agent', 'Legacy requests').secret, 'bearer');
+    const streams = new StreamService(new WorkService(store)),
+      flow = new OversightService(streams);
+    const s = streams.submit(agent, {
+      title: 'Existing requests',
+      outcome: 'Preserve input',
+      idempotencyKey: randomUUID(),
+    });
+    const action = flow.createAction(agent, {
+      streamId: s.id,
+      title: 'Existing action',
+      description: 'Keep the complete old instructions',
+      doneWhen: 'Human confirms',
+      idempotencyKey: randomUUID(),
+    });
+    const question = streams.recordContext(agent, s.id, {
+      kind: 'question',
+      body: 'Existing question?',
+      needsHuman: true,
+      idempotencyKey: randomUUID(),
+    });
+    store.raw.exec(
+      'ALTER TABLE human_actions DROP COLUMN guidance;ALTER TABLE stream_context DROP COLUMN guidance',
+    );
+    store.raw
+      .prepare('DELETE FROM schema_migrations WHERE name=?')
+      .run('0011_request_guidance.sql');
+    const original = ['human_actions', 'stream_context'].map((name) => ({
+      name,
+      columns: (store.raw.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[]).map(
+        (c) => c.name,
+      ),
+      rows: store.raw.prepare(`SELECT * FROM ${name} ORDER BY id`).all(),
+    }));
+    store.close();
+    store = openStore(path);
+    for (const t of original)
+      expect(
+        store.raw
+          .prepare(`SELECT ${t.columns.map((c) => `"${c}"`).join(',')} FROM ${t.name} ORDER BY id`)
+          .all(),
+      ).toEqual(t.rows);
+    const current = new OversightService(new StreamService(new WorkService(store)));
+    expect(
+      current.action({ id: 'owner', scope: 'owner', ownerId: 'owner' }, action.id).guidance,
+    ).toEqual({ steps: [], why: '', recommendation: '' });
+    expect(
+      current.streams.entry({ id: 'owner', scope: 'owner', ownerId: 'owner' }, question.id).guidance
+        ?.steps,
+    ).toEqual([]);
+    expect(store.raw.pragma('foreign_key_check')).toEqual([]);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

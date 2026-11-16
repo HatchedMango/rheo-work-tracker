@@ -358,3 +358,95 @@ it('keeps compact refreshes bounded and explicit about omitted context while leg
   expect(recovered.context).toHaveProperty('entries');
   expect(JSON.stringify(recovered.context)).toContain('Full recovery approach');
 });
+
+it('preserves per-work handoffs when switching away and back and deduplicates stream sessions', () => {
+  const s = stream();
+  const make = (title: string) =>
+    work.create(agent, createSchema.parse({ title, objective: title, streamId: s.id }));
+  const a = make('First change'),
+    b = make('Second change');
+  sync.event(agent, event(s.id, 'start', { changeId: a.id }));
+  const cp = event(s.id, 'checkpoint', {
+    changeId: a.id,
+    checkpoint: { summary: 'First handoff' },
+  });
+  sync.event(agent, cp);
+  sync.event(agent, event(s.id, 'start', { changeId: b.id }));
+  sync.event(
+    agent,
+    event(s.id, 'checkpoint', { changeId: b.id, checkpoint: { summary: 'Second handoff' } }),
+  );
+  expect(sync.workSessions(owner, { changeId: a.id }).items[0]).toMatchObject({
+    summary: 'First handoff',
+    selected: false,
+    title: 'First change',
+  });
+  expect(sync.workSessions(owner, { streamId: s.id })).toMatchObject({
+    total: 1,
+    items: [{ summary: 'Second handoff', relatedWorkCount: 2 }],
+  });
+  sync.event(agent, cp); // Replaying the old receipt must not move the session or alter history.
+  expect(sync.workSessions(owner, { changeId: a.id }).items[0].selected).toBe(false);
+  const firstSeen = sync.workSessions(owner, { changeId: a.id }).items[0].firstSeenAt;
+  sync.event(agent, event(s.id, 'start', { changeId: a.id }));
+  expect(sync.workSessions(owner, { changeId: a.id }).items[0]).toMatchObject({
+    summary: 'First handoff',
+    selected: true,
+    firstSeenAt: firstSeen,
+  });
+  expect(sync.workSessions(owner, { streamId: s.id }).items[0]).toMatchObject({
+    summary: 'First handoff',
+    relatedWorkCount: 2,
+  });
+  expect(store.raw.prepare('SELECT COUNT(*) n FROM session_work').get()).toEqual({ n: 2 });
+});
+it('keeps stale and rejected events out of session history and rolls history back with failed checkpoints', () => {
+  const a = stream(),
+    b = stream();
+  const start = event(a.id);
+  sync.event(agent, start);
+  const before = sync.workSessions(owner, { streamId: a.id });
+  sync.event(agent, event(a.id, 'prompt', { occurredAt: start.occurredAt - 1, turnId: 'older' }));
+  expect(sync.workSessions(owner, { streamId: a.id })).toEqual(before);
+  expect(() =>
+    sync.event(agent, event(b.id, 'start', { occurredAt: start.occurredAt - 1 })),
+  ).toThrow('Explicitly select');
+  expect(() =>
+    sync.event(
+      agent,
+      event(a.id, 'checkpoint', {
+        checkpoint: {
+          summary: 'Bad update',
+          change: { revision: 999, progress: 'working', note: 'No change selected' },
+        },
+      }),
+    ),
+  ).toThrow('Select a change');
+  expect(sync.workSessions(owner, { streamId: a.id })).toEqual(before);
+  expect(sync.workSessions(owner, { streamId: b.id }).total).toBe(0);
+});
+it('paginates session history deterministically, scopes agent reads and keeps disconnected history for the owner', () => {
+  const s = stream();
+  const auth = new Auth(store, () => t),
+    second = auth.actor(auth.register('agent', 'Second').secret, 'bearer');
+  for (let i = 0; i < 13; i++)
+    sync.event(agent, event(s.id, 'start', { sessionId: `session-${i}` }));
+  sync.event(second, event(s.id, 'start', { sessionId: 'other-client', client: 'claude-code' }));
+  const first = sync.workSessions(owner, { streamId: s.id, limit: 10 });
+  const next = sync.workSessions(owner, { streamId: s.id, limit: 10, offset: 10 });
+  expect(first).toMatchObject({ total: 14, nextOffset: 10 });
+  expect(next.items).toHaveLength(4);
+  expect(new Set([...first.items, ...next.items].map((s) => s.id)).size).toBe(14);
+  expect(sync.workSessions(second, { streamId: s.id }).total).toBe(1);
+  expect(JSON.stringify(first)).not.toMatch(/credentialId|tokenHash/);
+  store.raw.prepare('UPDATE credentials SET revokedAt=? WHERE id=?').run(t, agent.credentialId);
+  expect(
+    sync
+      .workSessions(owner, { streamId: s.id, limit: 30 })
+      .items.filter((s) => !s.connectionActive),
+  ).toHaveLength(13);
+  expect(() => sync.workSessions(owner, {})).toThrow('Select one');
+  expect(() => sync.workSessions(owner, { streamId: s.id, changeId: randomUUID() })).toThrow(
+    'Select one',
+  );
+});

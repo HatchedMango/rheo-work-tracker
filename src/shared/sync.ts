@@ -1,3 +1,4 @@
+import { requestGuidanceSchema } from './request-guidance.js';
 import { z } from 'zod';
 export const originSchema = z
   .object({
@@ -88,6 +89,7 @@ export const syncEventSchema = selectionSchema
             z
               .object({
                 kind: z.enum(['decision', 'finding', 'question', 'constraint']),
+                guidance: requestGuidanceSchema.optional(),
                 body: z.string().trim().min(1).max(4000),
                 needsHuman: z.boolean().default(false),
               })

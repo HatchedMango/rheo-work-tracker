@@ -11,10 +11,12 @@ export type MapNode = {
   tone: 'active' | 'waiting' | 'attention' | 'quiet' | 'planned';
   assessment: 'unknown' | 'current' | 'stale';
   prerequisiteCount: number;
+  requestRevision?: number;
   dependencyAssessment: import('./dependency-assessments.js').DependencyAssessment | null;
   quiet: boolean;
   reference: boolean;
   conversationUrl: string | null;
+  sessions?: import('./sessions.js').SessionLinks;
   outputs: { label: string; url: string }[];
 };
 export type MapEdge = Omit<FlowEdge, 'source' | 'title'> & {

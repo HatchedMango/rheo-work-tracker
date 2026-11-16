@@ -1,3 +1,8 @@
+import { RequestInstructions } from './RequestInstructions.js';
+import type { RequestGuidance } from '../../src/shared/request-guidance.js';
+import { StartWork } from './StartWork.js';
+import { SessionChips, Sessions, type SessionRequest } from './Sessions.js';
+import { workMapPath, type MapBox } from './work-map-path.js';
 import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { relationshipLabel } from '../../src/shared/dependency-presentation.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -38,12 +43,15 @@ export function StreamWorkMap({
   onStream,
   onBrowse,
   loadRequest,
+  request,
 }: {
+  request: SessionRequest;
   data: MapData;
   onWork: (id: string) => void;
   onStream: (id: string) => void;
   onBrowse: () => void;
   loadRequest: (path: string) => Promise<{
+    guidance?: RequestGuidance;
     body?: string;
     description?: string;
     doneWhen?: string;
@@ -65,6 +73,7 @@ export function StreamWorkMap({
   const selected = byId.get(selectedId ?? '') ?? fallback;
   const [fullRequest, setFullRequest] = useState<{
     id: string;
+    guidance?: RequestGuidance;
     body?: string;
     description?: string;
     doneWhen?: string;
@@ -89,7 +98,7 @@ export function StreamWorkMap({
     return () => {
       cancelled = true;
     };
-  }, [selected?.id, selected?.status, loadRequest]);
+  }, [selected?.id, selected?.status, selected?.requestRevision, loadRequest]);
 
   const [preferred, setPreferred] = useState(
     remembered('work-map-view') === 'list' ? 'list' : 'map',
@@ -131,11 +140,28 @@ export function StreamWorkMap({
     }
     const draw = () => {
       const bounds = el.getBoundingClientRect();
-      const positions = new Map(
-        Array.from(el.querySelectorAll<HTMLElement>('[data-map-node]')).map((n) => [
-          n.dataset.mapNode!,
-          n.getBoundingClientRect(),
-        ]),
+      const positions = new Map<string, MapBox>(
+        Array.from(el.querySelectorAll<HTMLElement>('[data-map-node]')).map((n) => {
+          const button = n.getBoundingClientRect();
+          const heading = n.closest('.work-map-group-heading');
+          const r =
+            heading?.getBoundingClientRect() ??
+            n.closest('[data-map-card]')?.getBoundingClientRect() ??
+            button;
+          return [
+            n.dataset.mapNode!,
+            {
+              left: r.left - bounds.left,
+              right: r.right - bounds.left,
+              top: r.top - bounds.top,
+              bottom: r.bottom - bounds.top,
+              groupId: byId.get(n.dataset.mapNode!)!.groupId,
+              heading: !!heading,
+              anchorLeft: button.left - bounds.left,
+              anchorRight: button.right - bounds.left,
+            },
+          ];
+        }),
       );
       setPaths(
         data.edges
@@ -143,59 +169,21 @@ export function StreamWorkMap({
             (e) =>
               data.edges.length <= 40 || e.sourceId === selected?.id || e.targetId === selected?.id,
           )
-          .flatMap((edge) => {
-            const a = positions.get(edge.sourceId),
-              b = positions.get(edge.targetId);
-            if (!a || !b) return [];
-            const ax = a.left + a.width / 2,
-              ay = a.top + a.height / 2,
-              bx = b.left + b.width / 2,
-              by = b.top + b.height / 2;
-            let d: string;
-            const sameRow = Math.abs(ay - by) < Math.min(a.height, b.height) / 2;
-            const obstruction = [...positions.entries()].some(
-              ([id, r]) =>
-                id !== edge.sourceId &&
-                id !== edge.targetId &&
-                r.left < Math.max(ax, bx) &&
-                r.right > Math.min(ax, bx) &&
-                r.top < Math.max(ay, by) + 1 &&
-                r.bottom > Math.min(ay, by) - 1,
-            );
-            if (
-              sameRow &&
-              !obstruction &&
-              byId.get(edge.sourceId)?.groupId === byId.get(edge.targetId)?.groupId
-            ) {
-              const forward = bx > ax,
-                x1 = (forward ? a.right : a.left) - bounds.left,
-                x2 = (forward ? b.left : b.right) - bounds.left,
-                y1 = ay - bounds.top,
-                y2 = by - bounds.top;
-              const bend = Math.max(12, Math.abs(x2 - x1) / 2);
-              d = `M ${x1} ${y1} C ${x1 + (forward ? bend : -bend)} ${y1}, ${x2 + (forward ? -bend : bend)} ${y2}, ${x2} ${y2}`;
-            } else {
-              // Use row gaps and an outside rail. A direct curve through an
-              // unrelated card would falsely imply that it is on this path.
-              const down = by > ay,
-                x1 = ax - bounds.left,
-                x2 = bx - bounds.left,
-                y1 = (down ? a.bottom : a.top) - bounds.top,
-                y2 = (sameRow || down ? b.top : b.bottom) - bounds.top,
-                outside1 = y1 + (down ? 8 : -8),
-                outside2 = y2 + (sameRow || down ? -8 : 8);
-              d = sameRow
-                ? `M ${x1} ${y1} V ${outside1} H ${x2} V ${y2}`
-                : `M ${x1} ${y1} V ${outside1} H 7 V ${outside2} H ${x2} V ${y2}`;
-            }
-            return [{ edge, d }];
+          .flatMap((edge, index) => {
+            const siblings = data.edges
+              .filter((e) => e.targetId === edge.targetId)
+              .sort(
+                (a, b) => a.sourceId.localeCompare(b.sourceId) || a.stage.localeCompare(b.stage),
+              );
+            const d = workMapPath(edge, positions, index, siblings);
+            return d ? [{ edge, d }] : [];
           }),
       );
     };
     draw();
     const observer = new ResizeObserver(draw);
     observer.observe(el);
-    el.querySelectorAll('[data-map-node]').forEach((n) => observer.observe(n));
+    el.querySelectorAll('[data-map-node], [data-map-card]').forEach((n) => observer.observe(n));
     return () => observer.disconnect();
   }, [data, mode, selected?.id]);
   const groups = [
@@ -220,43 +208,62 @@ export function StreamWorkMap({
                   ? 'quiet'
                   : 'planned'
         }
-        label={n.status}
-      />
+        className={n.tone === 'attention' ? 'request-status' : ''}
+      >
+        {n.kind === 'human_action' && <Hand size={12} aria-hidden="true" />}
+        {n.kind === 'question' && <MessageCircle size={12} aria-hidden="true" />}
+        {n.status}
+      </StatusBadge>
     );
   }
   function nodeButton(n: MapNode) {
     const unmet = data.edges.filter((e) => e.targetId === n.id && !e.satisfied);
     return (
-      <button
+      <div
         key={n.id}
-        type="button"
-        className={`work-map-node${n.quiet ? ' is-quiet' : ''}`}
-        data-map-node={n.id}
-        data-kind={n.kind}
-        aria-pressed={n.id === selected?.id}
-        onClick={() => select(n.id)}
+        className={`work-map-item${n.quiet ? ' is-quiet' : ''}`}
+        data-map-card={n.id}
+        data-tone={n.tone}
       >
-        <span className="work-map-node-meta">
-          {n.kind === 'human_action' && <Hand size={13} aria-hidden="true" />}
-          {n.kind === 'question' && <MessageCircle size={13} aria-hidden="true" />}
-          {n.kind === 'stream' && <Layers size={13} aria-hidden="true" />}
-          {badge(n)}
-          {n.reference && <small>Linked</small>}
-        </span>
-        <strong>{n.title}</strong>
-        {!n.quiet && n.dependencyAssessment && (
-          <small className="map-relationship-state" data-assessment={n.dependencyAssessment.state}>
-            {relationshipLabel(n.dependencyAssessment)}
-          </small>
-        )}
-        {n.status === 'In progress' && unmet.length > 0 && (
-          <span className="work-map-blocker">
-            {unmet.some((e) => e.stage === 'start')
-              ? 'Start prerequisite unmet'
-              : 'Waiting to deliver'}
+        <button
+          type="button"
+          className={`work-map-node${n.quiet ? ' is-quiet' : ''}`}
+          data-map-node={n.id}
+          data-kind={n.kind}
+          aria-pressed={n.id === selected?.id}
+          onClick={() => select(n.id)}
+        >
+          <span className="work-map-node-meta">
+            {n.kind === 'stream' && <Layers size={13} aria-hidden="true" />}
+            {badge(n)}
+            {n.reference && <small>Linked</small>}
           </span>
-        )}
-      </button>
+          <strong>{n.title}</strong>
+          {!n.quiet && n.dependencyAssessment && (
+            <small
+              className="map-relationship-state"
+              data-assessment={n.dependencyAssessment.state}
+            >
+              {relationshipLabel(n.dependencyAssessment)}
+            </small>
+          )}
+          {n.status === 'In progress' && unmet.length > 0 && (
+            <span className="work-map-blocker">
+              {unmet.some((e) => e.stage === 'start')
+                ? 'Start prerequisite unmet'
+                : 'Waiting to deliver'}
+            </span>
+          )}
+        </button>
+        {n.sessions?.items.length || (n.kind === 'change' && !n.quiet) ? (
+          <div className="work-map-footer">
+            {n.kind === 'change' && !n.quiet && (
+              <StartWork id={n.id} request={request} resumable={!!n.sessions?.resumable} />
+            )}
+            <SessionChips sessions={n.sessions} onMore={() => select(n.id)} />
+          </div>
+        ) : null}
+      </div>
     );
   }
   return (
@@ -297,12 +304,7 @@ export function StreamWorkMap({
         {data.edges.length ? (
           <>
             <span>{mode === 'map' ? 'Arrows' : 'Links'} show prerequisites</span>
-            {mode === 'map' && (
-              <span>
-                Solid: start · Dashed: delivery
-                {data.edges.length > 40 ? ' · Selected links shown' : ''}
-              </span>
-            )}
+            {mode === 'map' && data.edges.length > 40 && <span>Selected links shown</span>}
           </>
         ) : (
           <span>No prerequisite links recorded{data.complete ? '' : ' in this view'}</span>
@@ -338,7 +340,9 @@ export function StreamWorkMap({
                     d={d}
                     fill="none"
                     className={`work-map-edge ${tone}`}
-                    strokeDasharray={edge.stage === 'deliver' ? '5 4' : undefined}
+                    data-stage={edge.stage}
+                    data-source={edge.sourceId}
+                    data-target={edge.targetId}
                     markerEnd={`url(#${marker}-${tone})`}
                   />
                 );
@@ -376,6 +380,10 @@ export function StreamWorkMap({
                   ) : (
                     <h4>{group.title}</h4>
                   )}
+                  <SessionChips
+                    sessions={header?.sessions}
+                    onMore={() => header && select(header.id)}
+                  />
                   {header?.dependencyAssessment && (
                     <span
                       className="map-relationship-state"
@@ -408,17 +416,44 @@ export function StreamWorkMap({
               {badge(selected)}
               {selected.reference && <span className="fine">Linked reference</span>}
             </div>
-            <h3>{selected.title}</h3>
-            <BriefContent
-              text={
-                fullRequest?.id === selected.id
-                  ? fullRequest.body || fullRequest.description || selected.purpose
-                  : selected.purpose
-              }
-              limit={260}
-            />
-            {fullRequest?.id === selected.id && fullRequest.description && fullRequest.doneWhen && (
-              <p className="fine">Needed: {fullRequest.doneWhen}</p>
+            <h3>
+              {selected.kind === 'question' && fullRequest?.id === selected.id
+                ? fullRequest.body
+                : selected.title}
+            </h3>
+            {selected.kind === 'change' && !selected.quiet && (
+              <StartWork
+                id={selected.id}
+                request={request}
+                resumable={!!selected.sessions?.resumable}
+              />
+            )}
+            {(selected.kind === 'change' || selected.kind === 'stream') && (
+              <Sessions
+                request={request}
+                changeId={selected.kind === 'change' ? selected.id : undefined}
+                streamId={selected.kind === 'stream' ? selected.id : undefined}
+              />
+            )}
+            {['human_action', 'question'].includes(selected.kind) ? (
+              fullRequest?.id === selected.id ? (
+                <RequestInstructions
+                  key={selected.id}
+                  guidance={fullRequest.guidance}
+                  background={
+                    selected.kind === 'human_action' ? (fullRequest.description ?? '') : ''
+                  }
+                  doneWhen={fullRequest.doneWhen}
+                />
+              ) : (
+                !requestError && (
+                  <p className="fine" role="status">
+                    Loading request…
+                  </p>
+                )
+              )
+            ) : (
+              <BriefContent text={selected.purpose} limit={260} />
             )}
             {requestError && (
               <p role="alert" className="error">

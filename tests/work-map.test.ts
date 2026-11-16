@@ -242,3 +242,55 @@ it('keeps explicit questions visible after an answer and discloses omitted feedi
   expect(map.moreStreams).toBe(true);
   expect(map.complete).toBe(false);
 });
+
+it('attaches bounded chat links to their own work, including earlier associations, without leaking other agent sessions', async () => {
+  const { SyncService } = await import('../src/services/sync.js');
+  const sync = new SyncService(flow),
+    root = stream('Chat grouping'),
+    child = stream('Child work', root.id);
+  const a = change(root.id, 'First work'),
+    b = change(child.id, 'Second work');
+  const auth = new Auth(store),
+    other = auth.actor(auth.register('agent', 'Other client').secret, 'bearer');
+  let time = Date.now() - 1000;
+  const native = randomUUID();
+  const event = (actor: Actor, streamId: string, changeId?: string, sessionId: string = native) =>
+    sync.event(actor, {
+      streamId,
+      changeId,
+      sessionId,
+      client: 'codex',
+      project: '/project',
+      turnId: 'one',
+      event: 'start',
+      occurredAt: ++time,
+      eventId: randomUUID(),
+    });
+  event(agent, root.id, a.id);
+  event(agent, child.id, b.id);
+  event(agent, root.id, undefined, 'stream-only');
+  for (let i = 0; i < 5; i++) event(other, root.id, a.id, randomUUID());
+  const own = flow.map(agent, root.id);
+  expect(own.nodes.find((n) => n.id === a.id)?.sessions).toMatchObject({
+    total: 1,
+    items: [{ sessionId: native }],
+  });
+  expect(own.nodes.find((n) => n.id === b.id)?.sessions).toMatchObject({
+    total: 1,
+    items: [{ sessionId: native }],
+  });
+  expect(own.nodes.find((n) => n.id === root.id)?.sessions).toMatchObject({
+    total: 1,
+    items: [{ sessionId: 'stream-only' }],
+  });
+  expect(own.nodes.find((n) => n.id === child.id)?.sessions).toBeUndefined();
+  const owner: Actor = { id: 'owner', scope: 'owner', ownerId: 'owner' };
+  const links = flow.map(owner, root.id).nodes.find((n) => n.id === a.id)!.sessions!;
+  expect(links.total).toBe(6);
+  expect(links.items).toHaveLength(3);
+  expect(Object.keys(links.items[0]).sort()).toEqual(['client', 'id', 'sessionId']);
+  expect(sync.workSessions(owner, { streamId: root.id, directOnly: 'true' })).toMatchObject({
+    total: 1,
+    items: [{ sessionId: 'stream-only' }],
+  });
+});

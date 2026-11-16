@@ -1,3 +1,4 @@
+import { readRequestGuidance } from '../shared/request-guidance.js';
 import { readWorkMap } from './work-map.js';
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '../shared/contracts.js';
@@ -48,7 +49,11 @@ export class OversightService {
       )
       .get(id) as HumanAction | undefined;
     ensure(row, 404, 'Human action not found.');
-    return Object.assign(row, impact(this.store, id));
+    return Object.assign(
+      row,
+      { guidance: readRequestGuidance(row.guidance) },
+      impact(this.store, id),
+    );
   }
   actions(a: Actor, streamId: string, limit = 30, offset = 0) {
     this.streams.get(a, streamId);
@@ -81,7 +86,7 @@ export class OversightService {
           const id = randomUUID();
           this.raw
             .prepare(
-              'INSERT INTO human_actions(id,streamId,createdBy,title,description,doneWhen,ownerId,waitingOn,createdAt,updatedAt,conversationUrl) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+              'INSERT INTO human_actions(id,streamId,createdBy,title,description,doneWhen,ownerId,waitingOn,createdAt,updatedAt,conversationUrl,guidance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
             )
             .run(
               id,
@@ -95,6 +100,7 @@ export class OversightService {
               this.now(),
               this.now(),
               p.conversationUrl ?? null,
+              JSON.stringify(p.guidance ?? {}),
             );
           this.streams.event(a, p.streamId, 'human_action_requested', p.title, {
             id,
@@ -105,6 +111,57 @@ export class OversightService {
         (id) => this.action(a, id),
       );
     });
+  }
+  reviseAction(a: Actor, id: string, input: z.input<typeof c.reviseHumanActionSchema>) {
+    this.streams.allow(a);
+    const p = c.reviseHumanActionSchema.parse(input);
+    return this.work.tx(() =>
+      this.streams.retry(
+        a,
+        'human_action_revision:' + id,
+        p.idempotencyKey,
+        p,
+        () => {
+          const h = this.action(a, id);
+          ensure(
+            ['open', 'in_progress'].includes(h.state),
+            409,
+            'Only open requests can be clarified.',
+          );
+          ensure(
+            a.scope === 'owner' || h.createdBy === a.id,
+            403,
+            'Only the author or owner can revise this request.',
+          );
+          ensure(
+            h.revision === p.revision,
+            409,
+            `Request changed. Current revision: ${h.revision}.`,
+          );
+          this.raw
+            .prepare(
+              'UPDATE human_actions SET title=?,description=?,doneWhen=?,guidance=?,revision=revision+1,updatedAt=? WHERE id=?',
+            )
+            .run(
+              p.title ?? h.title,
+              p.description ?? h.description,
+              p.doneWhen ?? h.doneWhen,
+              JSON.stringify(p.guidance ?? h.guidance ?? {}),
+              this.now(),
+              id,
+            );
+          this.streams.event(
+            a,
+            h.streamId,
+            'human_action_revised',
+            'Clarified a request for input.',
+            { id, beforeRevision: h.revision, afterRevision: h.revision + 1, changes: p },
+          );
+          return id;
+        },
+        (id) => this.action(a, id),
+      ),
+    );
   }
   respond(
     a: Actor,
@@ -482,6 +539,8 @@ export class OversightService {
             entityId: h.id,
             title: h.title,
             body: h.description,
+            guidance: readRequestGuidance(h.guidance),
+            doneWhen: h.doneWhen,
             conversationUrl: h.conversationUrl,
             streamId: h.streamId,
             createdAt: h.createdAt,
@@ -498,6 +557,7 @@ export class OversightService {
         body: string;
         createdAt: number;
         conversationUrl: string | null;
+        guidance: string;
       }[])
         add({
           id: 'question:' + q.id,
@@ -505,6 +565,7 @@ export class OversightService {
           entityId: q.id,
           title: q.body,
           body: '',
+          guidance: readRequestGuidance(q.guidance),
           conversationUrl: q.conversationUrl,
           streamId: q.streamId,
           createdAt: q.createdAt,

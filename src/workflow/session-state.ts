@@ -56,9 +56,15 @@ export async function withSession<T>(
         }
       } catch {
         // Allow an interrupted lock initialization to recover, never a live owner.
-        if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs > 30_000) {
-          rmSync(lock, { recursive: true, force: true });
-          continue;
+        try {
+          if (Date.now() - statSync(lock).mtimeMs > 30_000) {
+            rmSync(lock, { recursive: true, force: true });
+            continue;
+          }
+        } catch (error) {
+          // The owner may release between our failed read and stat. Retry acquisition.
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
         }
       }
       if (Date.now() >= deadline) throw new Error('Session state is busy; retry the helper.');

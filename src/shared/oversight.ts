@@ -1,3 +1,4 @@
+import { requestGuidanceSchema, type RequestGuidance } from './request-guidance.js';
 import { z } from 'zod';
 import { conversationUrlSchema } from './conversation-schema.js';
 export const scopeIntentSchema = z.enum(['within_scope', 'scope_expansion']);
@@ -30,9 +31,20 @@ export const humanActionSchema = z
     streamId: z.uuid(),
     title: z.string().trim().min(1).max(180),
     description: z.string().trim().max(4000).default(''),
+    guidance: requestGuidanceSchema.optional(),
     doneWhen: z.string().trim().min(1).max(1500),
     waitingOn: z.string().trim().max(200).default(''),
     conversationUrl: conversationUrlSchema.optional(),
+    idempotencyKey: z.string().min(1).max(120),
+  })
+  .strict();
+export const reviseHumanActionSchema = z
+  .object({
+    revision: z.number().int().positive(),
+    title: z.string().trim().min(1).max(180).optional(),
+    description: z.string().trim().max(4000).optional(),
+    doneWhen: z.string().trim().min(1).max(1500).optional(),
+    guidance: requestGuidanceSchema.optional(),
     idempotencyKey: z.string().min(1).max(120),
   })
   .strict();
@@ -99,6 +111,7 @@ export type HumanAction = {
   actorName: string;
   title: string;
   description: string;
+  guidance?: RequestGuidance;
   doneWhen: string;
   ownerId: string;
   waitingOn: string;
@@ -137,6 +150,8 @@ export type AttentionItem = {
   workId?: string;
   entityId: string;
   body: string;
+  guidance?: RequestGuidance;
+  doneWhen?: string;
   conversationUrl?: string | null;
   createdAt: number;
   direct: { id: string; kind: string; title: string }[];

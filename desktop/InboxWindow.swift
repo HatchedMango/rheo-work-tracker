@@ -4,9 +4,18 @@ import WebKit
 func allowedChatDestination(_ url: URL) -> Bool {
     guard url.user == nil, url.password == nil else { return false }
     if ["https", "http"].contains(url.scheme?.lowercased() ?? "") { return true }
-    return url.scheme?.lowercased() == "codex" && url.host == "threads"
-        && url.port == nil && url.query == nil && url.fragment == nil
-        && url.path.range(of: "^/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", options: .regularExpression) != nil
+    guard url.scheme?.lowercased() == "codex", url.port == nil, url.fragment == nil else { return false }
+    if url.host == "threads" {
+        return url.query == nil && url.path.range(of: "^/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", options: .regularExpression) != nil
+    }
+    // User-clicked, unsent draft only. No settings, plugins, arbitrary commands or remote origins.
+    guard url.host == "new", url.path.isEmpty, url.absoluteString.count <= 70000,
+          let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+          items.count == 2, Set(items.map { $0.name }) == Set(["prompt", "path"]),
+          let prompt = items.first(where: { $0.name == "prompt" })?.value,
+          let path = items.first(where: { $0.name == "path" })?.value else { return false }
+    return !prompt.isEmpty && prompt.count <= 8000 && path.hasPrefix("/") && path.count <= 2000 && !path.contains("\0")
+
 }
 
 // Only the loopback application can be displayed in this window. Task references

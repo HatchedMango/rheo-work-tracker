@@ -19,9 +19,10 @@ The [second-Mac trial guide](docs/second-mac-trial.md) covers first use, agent c
 
 ## Everyday use
 
-- **Streams** shows goals, progress and the work map. Open a stream to see its changes and feeding streams without expanding another section. Map arrows describe recorded prerequisites; missing or stale assessments are visible.
+- **Streams** shows goals, progress and the work map. Open a stream to see its changes and feeding streams without expanding another section. Grouping shows stream membership; arrows show actual prerequisites between items. Missing or stale assessments are visible.
 - **Needs you** contains actual questions and human actions. Answer in your agent chat; permitted agents can reconcile the exact request. A chat link is shown only when a supported reliable link exists.
 - **Changes** provides a closer view and history. Agent delivery is separate from human completion; a stopped chat, expired claim or passing check never completes work automatically.
+- **Daily progress** shows changes done today against an editable target, including exact over-goal totals. Each change counts once at its first delivery or manual completion; reopening does not add another credit. The day follows your local timezone. See [counting details](docs/daily-progress-goal.md).
 - **Connections** manages local agent access and project workflow setup. Connection verification is a successful client tool call, not continuous online presence or proof that hooks ran.
 
 Close the window to leave local intake running. Reopen from the Dock, Spotlight or menu bar. **Quit Work Inbox** (⌘Q) stops the app and service. **Launch at Login** is optional. The Mac must be awake with Work Inbox running for agents to reach it.

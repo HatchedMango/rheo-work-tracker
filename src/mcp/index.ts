@@ -232,7 +232,7 @@ server.registerTool(
   'record_context',
   {
     description:
-      'Persist an attributed decision, finding, question or constraint. Only explicit open needsHuman questions appear in Needs you. Keep the ask short; optionally provide a validated conversationUrl to the relevant chat. Omit unavailable links. Use a stable idempotency key for retries.',
+      'Persist an attributed decision, finding, question or constraint. Only explicit open needsHuman questions appear in Needs you. Keep the question direct; optional guidance supplies concise steps, copy-only instructions, a short why and a recommendation. Keep background separate. Optionally provide a validated conversationUrl to the relevant chat. Omit unavailable links. Use a stable idempotency key for retries.',
     inputSchema: { streamId: z.uuid(), ...c.contextEntrySchema.shape },
   },
   ({ streamId, ...args }) =>
@@ -286,7 +286,7 @@ server.registerTool(
   'set_prerequisites',
   {
     description:
-      'Replace typed start/delivery prerequisites on a selected stream or change, using its metadata revision. Does not schedule work. Release active claims before plan edits.',
+      'Replace actual start/delivery prerequisites on a selected stream or change, using its metadata revision. Stream membership already expresses contribution; do not add item-to-containing-stream links just because the work helps complete it. Does not schedule work. Release active claims before plan edits.',
     inputSchema: o.setDependenciesSchema.shape,
   },
   (args) =>
@@ -298,12 +298,24 @@ server.registerTool(
   'request_human_action',
   {
     description:
-      'Ask for a specific human action, with a clear title, completion condition and optional waiting-on party. Explain what it unlocks; omit routine agent steps. Optionally provide conversationUrl to the relevant chat; omit unavailable links. Link it as a prerequisite separately. Never put secret values in task content.',
+      'Ask for one human action with a short verb-first title. Put concise how-to steps, optional copy.label/copy.text and one-sentence why in guidance. Keep background in description and detailed completion criteria in doneWhen. Never hide required instructions in background; omit routine agent steps. Optionally provide conversationUrl to the relevant chat; omit unavailable links. Link it as a prerequisite separately. Never put secret values in task content.',
     inputSchema: o.humanActionSchema.shape,
   },
   (args) =>
     result('request_human_action', () =>
       request('/api/human-actions', o.humanActionSchema.parse(args)),
+    ),
+);
+server.registerTool(
+  'revise_human_action',
+  {
+    description:
+      'Clarify your own existing request with an expected revision. Update action title and guidance steps, copy text and why; preserve identity, state and prerequisites. This does not report a human response.',
+    inputSchema: { actionId: z.uuid(), ...o.reviseHumanActionSchema.shape },
+  },
+  ({ actionId, ...args }) =>
+    result('revise_human_action', () =>
+      request(`/api/human-actions/${actionId}/update`, o.reviseHumanActionSchema.parse(args)),
     ),
 );
 server.registerTool(

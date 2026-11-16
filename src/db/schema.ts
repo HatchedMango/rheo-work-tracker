@@ -5,6 +5,22 @@ export const workspaces = sqliteTable('workspaces', {
   id: text().primaryKey(),
   name: text().notNull(),
 });
+export const dailyProgressPreferences = sqliteTable('daily_progress_preferences', {
+  id: text().primaryKey(),
+  target: integer().notNull().default(5),
+  revision: integer().notNull().default(1),
+});
+export const changeCompletions = sqliteTable(
+  'change_completions',
+  {
+    workId: text()
+      .primaryKey()
+      .references(() => work.id),
+    completedAt: integer().notNull(),
+    milestone: text().notNull(),
+  },
+  (t) => [index('change_completions_date').on(t.completedAt, t.workId)],
+);
 export const actors = sqliteTable('actors', {
   id: text().primaryKey(),
   workspaceId: text()
@@ -273,6 +289,7 @@ export const changeDependencies = sqliteTable('change_dependencies', {
   reason: text().notNull(),
 });
 export const streamContext = sqliteTable('stream_context', {
+  guidance: text().notNull().default('{}'),
   id: text().primaryKey(),
   streamId: text()
     .notNull()
@@ -350,6 +367,7 @@ export const streamApprovals = sqliteTable('stream_approvals', {
   createdAt: integer().notNull(),
 });
 export const humanActions = sqliteTable('human_actions', {
+  guidance: text().notNull().default('{}'),
   id: text().primaryKey(),
   streamId: text()
     .notNull()
@@ -447,4 +465,26 @@ export const workflowReceipts = sqliteTable(
     createdAt: integer().notNull(),
   },
   (t) => [uniqueIndex('workflow_receipt_identity').on(t.credentialId, t.eventId)],
+);
+export const sessionWork = sqliteTable(
+  'session_work',
+  {
+    id: text().primaryKey(),
+    workflowSessionId: text()
+      .notNull()
+      .references(() => workflowSessions.id),
+    selectionKey: text().notNull(),
+    streamId: text().references(() => streams.id),
+    changeId: text().references(() => work.id),
+    firstSeenAt: integer().notNull(),
+    lastSeenAt: integer().notNull(),
+    lastEvent: text().notNull(),
+    summary: text().notNull().default(''),
+    lastCheckpointAt: integer(),
+  },
+  (t) => [
+    uniqueIndex('session_work_identity').on(t.workflowSessionId, t.selectionKey),
+    index('session_work_stream').on(t.streamId, t.lastSeenAt),
+    index('session_work_change').on(t.changeId, t.lastSeenAt),
+  ],
 );

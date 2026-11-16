@@ -1,3 +1,4 @@
+import { sessionListSchema, type SessionPage, type WorkSession } from '../shared/sessions.js';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import type { Actor } from '../shared/contracts.js';
@@ -149,6 +150,52 @@ export class SyncService {
         ...(a.scope === 'agent' ? [a.credentialId ?? ''] : []),
       ) as SyncSession[];
     return { items: rows.map((r) => this.status(r)) };
+  }
+  workSessions(a: Actor, input: z.input<typeof sessionListSchema>): SessionPage {
+    this.streams.allow(a);
+    const p = sessionListSchema.parse(input);
+    if (p.streamId) this.streams.get(a, p.streamId);
+    if (p.changeId) this.work.get(a, p.changeId);
+    const where = `WHERE ${p.changeId ? 'h.changeId=?' : 'h.streamId=?'} ${p.directOnly ? 'AND h.changeId IS NULL' : ''} ${a.scope === 'agent' ? 'AND s.credentialId=?' : ''}`;
+    const params = [
+      p.changeId ?? p.streamId!,
+      ...(a.scope === 'agent' ? [a.credentialId ?? ''] : []),
+    ];
+    // A stream shows each native session once; a change always gets its own handoff.
+    const query = `WITH related AS (
+      SELECT h.*,s.sessionId,s.client,s.project,
+      CASE WHEN h.streamId IS s.streamId AND h.changeId IS s.changeId THEN 1 ELSE 0 END selected,
+      CASE WHEN c.revokedAt IS NULL AND (c.expiresAt IS NULL OR c.expiresAt>?) THEN 1 ELSE 0 END connectionActive,
+      coalesce(w.title,st.title,'Selected work') title,
+      ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY h.lastSeenAt DESC,h.id) rank,
+      COUNT(*) OVER (PARTITION BY s.id) relatedWorkCount
+      FROM session_work h JOIN workflow_sessions s ON s.id=h.workflowSessionId
+      JOIN credentials c ON c.id=s.credentialId
+      LEFT JOIN work w ON w.id=h.changeId LEFT JOIN streams st ON st.id=h.streamId ${where}
+    )`;
+    const total = (
+      this.raw
+        .prepare(query + ' SELECT COUNT(*) total FROM related WHERE rank=1')
+        .get(this.streams.now(), ...params) as { total: number }
+    ).total;
+    const rows = this.raw
+      .prepare(
+        query +
+          ` SELECT id,sessionId,client,project,streamId,changeId,title,firstSeenAt,lastSeenAt,lastEvent,summary,lastCheckpointAt,selected,connectionActive,relatedWorkCount FROM related WHERE rank=1 ORDER BY lastSeenAt DESC,id LIMIT ? OFFSET ?`,
+      )
+      .all(this.streams.now(), ...params, p.limit, p.offset) as (Omit<
+      WorkSession,
+      'selected' | 'connectionActive'
+    > & { selected: number; connectionActive: number })[];
+    return {
+      items: rows.map((r) => ({
+        ...r,
+        selected: !!r.selected,
+        connectionActive: !!r.connectionActive,
+      })),
+      total,
+      nextOffset: p.offset + p.limit < total ? p.offset + p.limit : null,
+    };
   }
   permission(a: Actor, credentialId: string, enabled: boolean) {
     ensure(
@@ -380,6 +427,31 @@ export class SyncService {
         this.raw
           .prepare('UPDATE workflow_sessions SET lastContextAt=? WHERE id=?')
           .run(now, session.id);
+      if (current) {
+        this.raw
+          .prepare(
+            `INSERT INTO session_work(id,workflowSessionId,selectionKey,streamId,changeId,firstSeenAt,lastSeenAt,lastEvent,summary,lastCheckpointAt)
+          VALUES (?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(workflowSessionId,selectionKey) DO UPDATE SET
+          lastSeenAt=excluded.lastSeenAt,lastEvent=excluded.lastEvent,
+          summary=CASE WHEN ? THEN excluded.summary ELSE session_work.summary END,
+          lastCheckpointAt=CASE WHEN ? THEN excluded.lastCheckpointAt ELSE session_work.lastCheckpointAt END`,
+          )
+          .run(
+            randomUUID(),
+            session.id,
+            `${streamId ?? ''}:${p.changeId ?? ''}`,
+            streamId ?? null,
+            p.changeId ?? null,
+            p.occurredAt,
+            p.occurredAt,
+            p.event,
+            p.checkpoint?.summary ?? '',
+            p.checkpoint ? now : null,
+            Number(!!p.checkpoint),
+            Number(!!p.checkpoint),
+          );
+      }
       const result = {
         eventId: p.eventId,
         session: this.status(this.session(a, p.sessionId)!),

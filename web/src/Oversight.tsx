@@ -1,3 +1,4 @@
+import { RequestInstructions } from './RequestInstructions.js';
 import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { StreamWorkMap } from './WorkMap.js';
 import type { WorkMap } from '../../src/shared/work-map.js';
@@ -91,7 +92,11 @@ function RequestCard({
           <WorkContent text={item.title} />
         </details>
       )}
-      {item.body && item.body !== item.title && <BriefContent text={item.body} limit={160} />}
+      <RequestInstructions
+        guidance={item.guidance}
+        background={item.body !== item.title ? item.body : ''}
+        doneWhen={item.doneWhen}
+      />
       {item.direct.length > 0 && (
         <div className="unlock-list">
           <span>
@@ -248,6 +253,7 @@ export function Oversight({
             onStream={onStream}
             onBrowse={onUngrouped}
             loadRequest={request}
+            request={request}
           />
         ) : (
           <p role="status">Loading work…</p>
@@ -342,6 +348,7 @@ export function Oversight({
             </p>
           )}
           <DependencyAssessmentView assessment={s.dependencyAssessment} />
+
           {detail.sync.items.length > 0 && (
             <details className="sync-summary">
               <summary>

@@ -1,3 +1,4 @@
+import { readRequestGuidance } from '../shared/request-guidance.js';
 import {
   readDependencyAssessment,
   assertImplementationReady,
@@ -347,7 +348,11 @@ export class StreamService {
             `SELECT c.*,a.name actorName FROM stream_context c JOIN actors a ON a.id=c.createdBy WHERE streamId=? ORDER BY CASE WHEN c.state='open' AND c.needsHuman=1 THEN 0 WHEN c.state='open' AND c.kind='question' THEN 1 WHEN c.state='open' THEN 2 ELSE 3 END,c.updatedAt DESC,c.rowid DESC LIMIT ? OFFSET ?`,
           )
           .all(id, Math.min(30, limit), offset) as c.ContextEntry[]
-      ).map((e) => ({ ...e, needsHuman: !!e.needsHuman })),
+      ).map((e) => ({
+        ...e,
+        needsHuman: !!e.needsHuman,
+        guidance: readRequestGuidance(e.guidance),
+      })),
       total: (
         this.raw.prepare('SELECT count(*) n FROM stream_context WHERE streamId=?').get(id) as {
           n: number;
@@ -358,6 +363,7 @@ export class StreamService {
   recordContext(a: Actor, id: string, input: z.input<typeof c.contextEntrySchema>) {
     this.allow(a);
     const p = c.contextEntrySchema.parse(input);
+    ensure(!p.guidance || p.kind === 'question', 400, 'Request guidance is for questions.');
     ensure(
       !p.needsHuman || p.kind === 'question',
       400,
@@ -375,7 +381,7 @@ export class StreamService {
             now = this.now();
           this.raw
             .prepare(
-              `INSERT INTO stream_context(id,streamId,kind,body,needsHuman,createdBy,createdAt,updatedAt,conversationUrl) VALUES (?,?,?,?,?,?,?,?,?)`,
+              `INSERT INTO stream_context(id,streamId,kind,body,needsHuman,createdBy,createdAt,updatedAt,conversationUrl,guidance) VALUES (?,?,?,?,?,?,?,?,?,?)`,
             )
             .run(
               entry,
@@ -387,6 +393,7 @@ export class StreamService {
               now,
               now,
               p.conversationUrl ?? null,
+              JSON.stringify(p.guidance ?? {}),
             );
           this.event(a, id, 'context_recorded', `Recorded ${p.kind}.`, {
             entryId: entry,
@@ -406,7 +413,7 @@ export class StreamService {
       )
       .get(id) as c.ContextEntry | undefined;
     ensure(e, 404, 'Context entry not found.');
-    return { ...e, needsHuman: !!e.needsHuman };
+    return { ...e, needsHuman: !!e.needsHuman, guidance: readRequestGuidance(e.guidance) };
   }
   resolveContext(a: Actor, id: string, input: z.input<typeof c.resolveContextSchema>) {
     this.allow(a);

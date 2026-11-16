@@ -1,3 +1,8 @@
+import { WorkChatService } from '../services/work-chat.js';
+import { DailyProgressService } from '../services/daily-progress.js';
+import { dailyProgressQuerySchema } from '../shared/daily-progress.js';
+import { workChatSchema } from '../shared/work-chat.js';
+import { sessionListSchema } from '../shared/sessions.js';
 import { DependencyAssessmentService } from '../services/dependency-assessments.js';
 import * as assessmentContracts from '../shared/dependency-assessments.js';
 import { OversightService } from '../services/oversight.js';
@@ -53,6 +58,8 @@ export async function createApp(
   const streams = new StreamService(service);
   const oversight = new OversightService(streams);
   const sync = new SyncService(oversight);
+  const workChats = new WorkChatService(streams);
+  const dailyProgress = new DailyProgressService(store, options.clock);
   const assessments = new DependencyAssessmentService(streams);
   const connections = new ConnectionService(store, {
     origin: options.origin,
@@ -156,6 +163,19 @@ export async function createApp(
     return { ok: true };
   });
   app.get('/api/status', async (req) => service.status(authenticate(req)));
+  app.get('/api/daily-progress', async (req) => {
+    const q = dailyProgressQuerySchema.parse(req.query);
+    return dailyProgress.get(
+      authenticate(req),
+      q.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    );
+  });
+  app.post('/api/daily-progress/target', async (req) =>
+    dailyProgress.setTarget(writeActor(req), req.body),
+  );
+  app.get('/api/sessions', async (req) =>
+    sync.workSessions(authenticate(req), sessionListSchema.parse(req.query)),
+  );
   app.get('/api/sync', async (req) =>
     sync.list(
       authenticate(req),
@@ -221,6 +241,12 @@ export async function createApp(
     reply.code(201);
     return item;
   });
+  app.get('/api/work/:id/chat', async (req) =>
+    workChats.prepare(authenticate(req), idOf(req.params)),
+  );
+  app.post('/api/work/:id/chat', async (req) =>
+    workChats.prepare(writeActor(req), idOf(req.params), workChatSchema.parse(req.body)),
+  );
   app.get('/api/work/:id', async (req) => service.get(authenticate(req), idOf(req.params)));
   app.put('/api/work/:id', async (req) => {
     const body = contentSchema.extend({ revision: z.number().int().positive() }).parse(req.body);
@@ -300,6 +326,13 @@ export async function createApp(
   );
   app.get('/api/human-actions/:id', async (req) =>
     oversight.action(authenticate(req), idOf(req.params)),
+  );
+  app.post('/api/human-actions/:id/update', async (req) =>
+    oversight.reviseAction(
+      writeActor(req),
+      idOf(req.params),
+      oversightContracts.reviseHumanActionSchema.parse(req.body),
+    ),
   );
   app.post('/api/human-actions/:id/respond', async (req) =>
     oversight.respond(
@@ -441,5 +474,5 @@ export async function createApp(
   });
   if (options.publicDir && existsSync(options.publicDir))
     await app.register(serveStatic, { root: options.publicDir });
-  return { app, auth, service, connections, streams, oversight, sync };
+  return { app, auth, service, connections, streams, oversight, sync, dailyProgress };
 }

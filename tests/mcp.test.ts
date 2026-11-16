@@ -247,6 +247,7 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
       streamId: stream.id,
       title: 'Get access from Bob',
       doneWhen: 'Access available locally',
+      guidance: { steps: ['Ask Bob for access.'], why: 'This unlocks the integration.' },
       idempotencyKey: 'access',
     });
     await call('set_prerequisites', {
@@ -262,6 +263,19 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
       ],
     });
     expect((await call('get_human_action', { actionId: human.id })).state).toBe('open');
+    const revisedHuman = await call('revise_human_action', {
+      actionId: human.id,
+      revision: 1,
+      title: 'Get API access',
+      guidance: { steps: ['Ask Bob for sandbox access.'], why: 'This unlocks the integration.' },
+      idempotencyKey: 'clarify-access',
+    });
+    expect(revisedHuman).toMatchObject({
+      id: human.id,
+      revision: 2,
+      state: 'open',
+      guidance: { steps: ['Ask Bob for sandbox access.'] },
+    });
     const overview = await call('get_stream_context', {
       changeId: routine.id,
       project: '/explicit/project',
@@ -285,7 +299,7 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
     });
     await call('withdraw_human_action', {
       actionId: human.id,
-      revision: 1,
+      revision: 2,
       reason: 'No longer needed',
       idempotencyKey: 'withdraw',
     });

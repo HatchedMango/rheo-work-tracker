@@ -1,3 +1,4 @@
+import { readSessionLinks } from './session-links.js';
 import type { AssessmentCache } from './dependency-assessments.js';
 import type { Actor } from '../shared/contracts.js';
 import type { MapNode, WorkMap, MapEdge } from '../shared/work-map.js';
@@ -170,6 +171,7 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
             prerequisiteCount: 0,
             reference: false,
             conversationUrl: q.conversationUrl,
+            requestRevision: q.revision,
             outputs: [],
           };
         } else {
@@ -197,6 +199,7 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
             prerequisiteCount: 0,
             reference,
             conversationUrl: h.conversationUrl,
+            requestRevision: h.revision,
             outputs: [],
           };
         }
@@ -253,6 +256,16 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
           satisfied: d.satisfied,
           evidence: d.evidence,
         });
+      }
+      const sessionLinks = readSessionLinks(
+        store,
+        actor,
+        nodes.filter((n) => n.kind === 'stream' || n.kind === 'change').map((n) => n.id),
+        streams.now(),
+      );
+      for (const n of nodes) {
+        const links = sessionLinks.get(n.id);
+        if (links) n.sessions = links;
       }
       const depthLimit = groups.some(
         (g) =>

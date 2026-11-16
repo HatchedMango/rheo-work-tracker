@@ -1119,3 +1119,155 @@ test('explicit relationship reports distinguish none, uncertainty and stale scop
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/dependency-assessment-mobile.png', fullPage: true });
 });
+
+test('stream connectors stay solid, separate and clear of cards after rows wrap', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 1050 });
+  await openWorkspace(page);
+  const config = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
+  const post = async (path: string, body: unknown) => {
+    const r = await fetch(`${config.url}/api${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(r.ok).toBe(true);
+    return r.json();
+  };
+  const stream = await post('/streams', {
+    title: 'Get ready for everyday use',
+    outcome: 'Follow progress without micromanaging',
+    idempotencyKey: randomUUID(),
+  });
+  const trial = await capture(
+    'Try Work Inbox on another Mac',
+    'Use a separate local installation',
+    { streamId: stream.id },
+  );
+  const fillerA = await capture('A small interface improvement', 'Keep secondary details quiet', {
+    streamId: stream.id,
+  });
+  const fillerB = await capture(
+    'Another optional improvement',
+    'Keep routine work in the background',
+    {
+      streamId: stream.id,
+    },
+  );
+  const sync = await capture(
+    'Keep work in sync during everyday use',
+    'Retain the right work across chats',
+    { streamId: stream.id },
+  );
+  const action = await post('/human-actions', {
+    streamId: stream.id,
+    title: 'Sign into GitHub to publish the Mac trial',
+    doneWhen: 'Sign-in is available',
+    idempotencyKey: randomUUID(),
+  });
+  await post('/dependencies', {
+    target: { id: trial.id, kind: 'change' },
+    revision: trial.tracking.revision,
+    dependencies: [
+      {
+        source: { id: action.id, kind: 'human_action' },
+        stage: 'deliver',
+        condition: 'done',
+        reason: 'Publishing needs access.',
+      },
+    ],
+  });
+  await post('/dependencies', {
+    target: { id: stream.id, kind: 'stream' },
+    revision: stream.revision,
+    dependencies: [trial, sync].map((w) => ({
+      source: { id: w.id, kind: 'change' },
+      stage: 'deliver',
+      condition: 'output_available',
+      reason: 'This contributes to everyday readiness.',
+    })),
+  });
+  for (const target of [
+    { id: stream.id, kind: 'stream' },
+    { id: trial.id, kind: 'change' },
+  ]) {
+    const r = await post('/dependencies/review', { target, limit: 100 });
+    await post('/dependencies/assess', {
+      target,
+      revision: r.revision,
+      scopeStreamId: r.scopeStreamId,
+      scopeFingerprint: r.scopeFingerprint,
+      planFingerprint: r.planFingerprint,
+      reviewedIds: r.items.map((x: { id: string }) => x.id),
+      coverage: 'complete',
+      start: { result: 'none', reason: 'No pending start gates.' },
+      deliver: { result: 'linked', reason: 'Recorded delivery gates apply.' },
+      idempotencyKey: randomUUID(),
+    });
+  }
+  await page.goto(`/?view=streams&stream=${stream.id}`);
+  const region = page.getByRole('region', { name: 'Stream detail' });
+  await expect(region.locator('.work-map-edge')).toHaveCount(3);
+  const geometry = () =>
+    region.locator('.work-map-groups').evaluate((el) => {
+      const bounds = el.getBoundingClientRect();
+      const cards = Array.from(el.querySelectorAll<HTMLElement>('.work-map-node'));
+      const paths = Array.from(el.querySelectorAll<SVGPathElement>('.work-map-edge'));
+      const collisions: string[] = [];
+      for (const path of paths) {
+        for (let l = 4; l < path.getTotalLength() - 4; l += 3) {
+          const p = path.getPointAtLength(l),
+            x = bounds.left + p.x,
+            y = bounds.top + p.y;
+          for (const card of cards) {
+            if ([path.dataset.source, path.dataset.target].includes(card.dataset.mapNode)) continue;
+            const r = card.getBoundingClientRect();
+            if (x > r.left - 2 && x < r.right + 2 && y > r.top - 2 && y < r.bottom + 2)
+              collisions.push(card.dataset.mapNode!);
+          }
+        }
+      }
+      const headerId = el.querySelector<HTMLElement>('.work-map-group-heading [data-map-node]')!
+        .dataset.mapNode;
+      const headerPaths = paths.filter((p) => p.dataset.target === headerId);
+      return {
+        collisions,
+        dashes: paths.map((p) => getComputedStyle(p).strokeDasharray),
+        endpoints: headerPaths.map((p) => Math.round(p.getPointAtLength(p.getTotalLength()).x)),
+        rounded: headerPaths.every((p) => p.getAttribute('d')!.includes('Q')),
+      };
+    });
+  await expect.poll(async () => (await geometry()).collisions).toEqual([]);
+  expect((await geometry()).dashes.every((d) => d === 'none')).toBe(true);
+  expect(new Set((await geometry()).endpoints).size).toBe(2);
+  expect((await geometry()).rounded).toBe(true);
+  // The long feed is genuinely on a later row, rather than a same-row-only fixture.
+  const sourceBoxes = await region
+    .locator(
+      `.work-map-node[data-map-node="${sync.id}"], .work-map-node[data-map-node="${action.id}"]`,
+    )
+    .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect().top));
+  expect(Math.max(...sourceBoxes) - Math.min(...sourceBoxes)).toBeGreaterThan(30);
+  await region.screenshot({ path: 'test-results/stream-connectors-wrapped.png' });
+  await region.locator(`.work-map-node[data-map-node="${trial.id}"]`).click();
+  await expect(region.getByRole('complementary')).toContainText('Before delivering');
+  await page.setViewportSize({ width: 1720, height: 1050 });
+  for (const work of [fillerA, fillerB])
+    await post(`/work/${work.id}/tracking`, {
+      revision: work.tracking.revision,
+      progress: 'delivered',
+      progressNote: 'Finished fixture context.',
+    });
+  await expect(region.locator('.work-map-node.is-quiet')).toHaveCount(2);
+
+  await expect.poll(async () => (await geometry()).collisions).toEqual([]);
+  await region.screenshot({ path: 'test-results/stream-connectors-wide.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(region.getByRole('button', { name: 'List', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(region.locator('.work-map-edges')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
