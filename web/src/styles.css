@@ -1760,7 +1760,8 @@ button svg {
   font-weight: 400;
   margin-left: 6px;
 }
-.oversight-detail h2 {
+.oversight-detail h2,
+.stream-title h1 {
   font-size: 26px;
   letter-spacing: -0.5px;
 }
@@ -1884,6 +1885,7 @@ button svg {
   flex-shrink: 0;
   margin-top: 4px;
 }
+.stream-title h1,
 .stream-title h2 {
   margin: 0;
   line-height: 1.25;
@@ -1908,7 +1910,8 @@ button svg {
     align-items: flex-start;
     flex-wrap: wrap;
   }
-  .oversight-detail h2 {
+  .oversight-detail h2,
+  .stream-title h1 {
     font-size: 22px;
   }
   .stream-title {
@@ -3106,7 +3109,7 @@ button svg {
   min-width: 0;
 }
 .work-map-history {
-  margin-top: 12px;
+  margin-top: 24px;
   padding-left: 32px;
 }
 .mode-list .work-map-history {
@@ -3193,4 +3196,67 @@ button svg {
   font-size: 10px;
   padding: 3px 6px;
   white-space: normal;
+}
+
+/* Stream work expands with the window; reading views keep their narrower measure. */
+.oversight-detail {
+  max-width: none;
+  margin: 0;
+}
+.main:has(.stream-work) {
+  padding-inline: 32px;
+}
+.work-map-layout {
+  grid-template-columns: minmax(0, 1fr) clamp(260px, 20vw, 320px);
+  gap: 24px;
+}
+.work-map-groups {
+  padding-left: 24px;
+}
+.work-map-headings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin-bottom: 20px;
+}
+.work-map-headings .work-map-group {
+  padding-bottom: 0;
+  min-width: 0;
+}
+.work-map-headings .work-map-group-heading {
+  margin-bottom: 0;
+}
+.mode-map .work-map-group[data-heading-links='true'] .work-map-group-heading {
+  margin-bottom: 16px;
+}
+.work-map-nodes {
+  gap: 32px 40px;
+  align-items: stretch;
+}
+.map-card-stream {
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 1100px) {
+  .work-map-layout {
+    grid-template-columns: minmax(0, 1fr) 260px;
+    gap: 20px;
+  }
+}
+@media (max-width: 900px) {
+  .work-map-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .main:has(.stream-work) {
+    padding-inline: 20px;
+  }
+  .work-map-headings {
+    gap: 12px;
+  }
+}
+
+.work-map-nodes.flow-compact {
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 340px));
 }

@@ -397,9 +397,11 @@ function App() {
         )}
       </aside>
       <main className={`main ${route.id || route.streamId ? 'has-selection' : ''}`}>
-        <header className="page-header">
-          <h1>{title}</h1>
-        </header>
+        {!(route.view === 'streams' && route.streamId) && (
+          <header className="page-header">
+            <h1>{title}</h1>
+          </header>
+        )}
         {error && (
           <div role="alert" className="error-banner">
             {error}

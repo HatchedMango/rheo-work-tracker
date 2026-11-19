@@ -94,6 +94,25 @@ export function workMapPath(
       { x: port, y: b.bottom },
     ]);
   }
+  // Layered columns use the shared vertical gutter for branches and joins.
+  // Never send a forward edge over an intervening card just to keep it short.
+  if (!a.heading && !b.heading && b.left > a.right + 12) {
+    const slot = siblings.findIndex((e) => e.sourceId === edge.sourceId && e.stage === edge.stage);
+    const port = b.top + ((b.bottom - b.top) * (slot + 1)) / (siblings.length + 1);
+    for (const lane of [(a.right + b.left) / 2, a.right + 14, b.left - 14]) {
+      if (
+        !blocked(a.right, ay, lane, ay) &&
+        !blocked(lane, ay, lane, port) &&
+        !blocked(lane, port, b.left, port)
+      )
+        return rounded([
+          { x: a.right, y: ay },
+          { x: lane, y: ay },
+          { x: lane, y: port },
+          { x: b.left, y: port },
+        ]);
+    }
+  }
   const sameRow = Math.abs(ay - by) < Math.min(a.bottom - a.top, b.bottom - b.top) / 2;
   if (sameRow && !blocked(ax, ay, bx, by) && a.groupId === b.groupId) {
     const forward = bx > ax,

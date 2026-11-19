@@ -1306,3 +1306,182 @@ test('stream connectors stay solid, separate and clear of cards after rows wrap'
   await expect(region.locator('.work-map-edges')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('dependency columns use the screen and keep branching work together', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1100 });
+  await openWorkspace(page);
+  const config = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
+  const post = async (path: string, body: unknown) => {
+    const r = await fetch(`${config.url}/api${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(r.ok).toBe(true);
+    return r.json();
+  };
+  const stream = await post('/streams', {
+    title: 'Ship the next trial',
+    outcome: 'Make the path to delivery clear',
+    idempotencyKey: randomUUID(),
+  });
+  const child = await post('/streams', {
+    title: 'Verify the app',
+    outcome: 'Check the trial on another machine',
+    parentId: stream.id,
+    idempotencyKey: randomUUID(),
+  });
+  const build = await capture('Build the installer', 'Package the app', { streamId: stream.id });
+  const independent = await capture('Check the logo', 'An independent improvement', {
+    streamId: stream.id,
+  });
+  const testMac = await capture('Test on another Mac', 'Exercise installation', {
+    streamId: child.id,
+  });
+  const testBackup = await capture('Test backup and restore', 'Preserve work', {
+    streamId: child.id,
+  });
+  const distribute = await capture('Distribute the trial', 'Share the verified installer', {
+    streamId: stream.id,
+  });
+  await page.goto(`/?view=streams&stream=${stream.id}`);
+  const region = page.getByRole('region', { name: 'Stream detail' });
+  await expect(page.getByRole('heading', { name: 'Streams', level: 1 })).toHaveCount(0);
+  await expect(region.getByRole('heading', { name: stream.title, level: 1 })).toBeVisible();
+  await expect(region.locator('.flow-compact')).toBeVisible();
+  const compactBoxes = await region
+    .locator('.work-map-nodes [data-map-card]')
+    .evaluateAll((cards) =>
+      cards.map((card) => {
+        const r = card.getBoundingClientRect();
+        return { x: r.x, y: r.y };
+      }),
+    );
+  expect(compactBoxes[0].y).toBe(compactBoxes[1].y);
+  expect(compactBoxes[0].x).toBeLessThan(compactBoxes[1].x);
+  await region.screenshot({ path: 'test-results/stream-compact-grid.png' });
+  for (const [target, sources] of [
+    [testMac, [build]],
+    [testBackup, [build]],
+    [distribute, [testMac, testBackup]],
+  ] as const) {
+    await post('/dependencies', {
+      target: { kind: 'change', id: target.id },
+      revision: target.tracking.revision,
+      dependencies: sources.map((source) => ({
+        source: { kind: 'change', id: source.id },
+        stage: 'start',
+        condition: 'output_available',
+        reason: 'Use the verified output first.',
+      })),
+    });
+  }
+  await expect(region.locator('.flow-compact')).toHaveCount(0);
+  await expect(region.locator('.work-map-edge')).toHaveCount(4);
+  const box = async (id: string) =>
+    (await region.locator(`[data-map-card="${id}"]`).boundingBox())!;
+  await expect(region.locator('.flow-horizontal')).toBeVisible();
+  const a = await box(build.id),
+    b = await box(testMac.id),
+    c = await box(testBackup.id),
+    d = await box(distribute.id),
+    alone = await box(independent.id);
+  expect(b.x).toBeGreaterThan(a.x + a.width);
+  expect(c.x).toBe(b.x);
+  expect(d.x).toBeGreaterThan(b.x + b.width);
+  expect(alone.y).toBeGreaterThan(
+    Math.max(a.y + a.height, b.y + b.height, c.y + c.height, d.y + d.height),
+  );
+  const frame = (await region.boundingBox())!;
+  expect(frame.x).toBeLessThan(250);
+  expect(frame.width).toBeGreaterThan(1600);
+  expect(a.width).toBeGreaterThanOrEqual(240);
+  const clearPaths = () =>
+    region.locator('.work-map-groups').evaluate((el) => {
+      const root = el.getBoundingClientRect(),
+        collisions: string[] = [];
+      for (const path of el.querySelectorAll<SVGPathElement>('.work-map-edge')) {
+        for (let length = 4; length < path.getTotalLength() - 4; length += 3) {
+          const p = path.getPointAtLength(length);
+          for (const card of el.querySelectorAll<HTMLElement>('[data-map-card]')) {
+            if ([path.dataset.source, path.dataset.target].includes(card.dataset.mapCard)) continue;
+            const r = card.getBoundingClientRect();
+            if (
+              root.left + p.x > r.left - 2 &&
+              root.left + p.x < r.right + 2 &&
+              root.top + p.y > r.top - 2 &&
+              root.top + p.y < r.bottom + 2
+            )
+              collisions.push(card.dataset.mapCard!);
+          }
+        }
+      }
+      return collisions;
+    });
+  await expect.poll(clearPaths).toEqual([]);
+  await region.screenshot({ path: 'test-results/dependency-flow-wide.png' });
+  await region.locator(`[data-map-node="${testMac.id}"]`).click();
+  const stable = await box(build.id);
+  expect(stable.x).toBe(a.x);
+  expect(stable.y).toBe(a.y);
+  await expect(region.getByRole('complementary')).toContainText('Build the installer');
+  for (const width of [1280, 960, 760, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(region.locator('.flow-vertical')).toBeVisible();
+    const before = await box(build.id),
+      after = await box(testMac.id),
+      last = await box(distribute.id);
+    expect((await box(independent.id)).y).toBeLessThan(after.y);
+    expect(after.y).toBeGreaterThan(before.y + before.height);
+    expect(last.y).toBeGreaterThan(after.y + after.height);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await expect.poll(clearPaths).toEqual([]);
+    await region.screenshot({ path: `test-results/dependency-flow-${width}.png` });
+  }
+  // An actual stream prerequisite participates in the flow as a card, while
+  // its membership heading remains navigation and creates no extra arrows.
+  await post('/dependencies', {
+    target: { id: independent.id, kind: 'change' },
+    revision: independent.tracking.revision,
+    dependencies: [
+      {
+        source: { id: child.id, kind: 'stream' },
+        stage: 'start',
+        condition: 'outcome_available',
+        reason: 'Use the verified stream output.',
+      },
+    ],
+  });
+  await page.setViewportSize({ width: 1920, height: 1100 });
+  await expect(region.locator(`[data-map-card="${child.id}"]`)).toBeVisible();
+  await expect(region.locator(`[data-map-node="${child.id}"]`)).toHaveCount(1);
+  expect((await box(independent.id)).x).toBeGreaterThan((await box(child.id)).x);
+  await expect.poll(clearPaths).toEqual([]);
+  // Finished links remain in history/details and do not reserve flow columns.
+  for (const work of [build, testMac, testBackup]) {
+    const latest = await fetch(`${config.url}/api/work/${work.id}`, {
+      headers: { Authorization: `Bearer ${config.token}` },
+    }).then((r) => r.json());
+    await post(`/work/${work.id}/tracking`, {
+      revision: latest.tracking.revision,
+      progress: 'delivered',
+    });
+  }
+  // Clear the remaining explicit stream gate in this disposable fixture.
+  const latest = await fetch(`${config.url}/api/work/${independent.id}`, {
+    headers: { Authorization: `Bearer ${config.token}` },
+  }).then((r) => r.json());
+  await post('/dependencies', {
+    target: { id: independent.id, kind: 'change' },
+    revision: latest.tracking.revision,
+    dependencies: [],
+  });
+  await expect(region.locator('.flow-compact')).toBeVisible();
+  await expect(region.locator('.work-map-edge')).toHaveCount(0);
+  await expect(region.getByRole('region', { name: 'Earlier work' })).toContainText(build.title);
+  await region.getByRole('button', { name: 'All streams', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Streams', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: stream.title, level: 2 })).toBeVisible();
+});

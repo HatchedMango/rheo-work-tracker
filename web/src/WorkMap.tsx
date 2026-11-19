@@ -3,6 +3,7 @@ import type { RequestGuidance } from '../../src/shared/request-guidance.js';
 import { StartWork } from './StartWork.js';
 import { SessionChips, Sessions, type SessionRequest } from './Sessions.js';
 import { workMapPath, type MapBox } from './work-map-path.js';
+import { workMapLayout, verticalMapLayout } from './work-map-layout.js';
 import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { relationshipLabel } from '../../src/shared/dependency-presentation.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -105,10 +106,28 @@ export function StreamWorkMap({
   }, [selected?.id, selected?.status, selected?.requestRevision, loadRequest]);
 
   const [width, setWidth] = useState(1000),
+    [canvasWidth, setCanvasWidth] = useState(800),
     [paths, setPaths] = useState<{ edge: MapEdge; d: string }[]>([]);
   const container = useRef<HTMLElement>(null),
     graph = useRef<HTMLDivElement>(null);
   const mode = width < 620 ? 'list' : 'map';
+  const streamGates = new Set(
+    activeEdges
+      .filter((e) => e.stage === 'start' && !e.satisfied)
+      .flatMap((e) => [e.sourceId, e.targetId])
+      .filter((id) => byId.get(id)?.kind === 'stream'),
+  );
+  const activeNodes = ordered.nodes.filter(
+    (n) => !n.quiet && (n.kind !== 'stream' || n.reference || streamGates.has(n.id)),
+  );
+  const compact = activeEdges.length === 0;
+  const flow = workMapLayout(activeNodes, activeEdges);
+  const direction =
+    flow.columns * 240 + (flow.columns - 1) * 40 > canvasWidth ? 'vertical' : 'horizontal';
+  const placement =
+    direction === 'vertical'
+      ? verticalMapLayout(flow, Math.max(1, Math.floor((canvasWidth + 40) / 280)))
+      : flow;
   const marker = 'map-arrow-' + data.rootId;
   function select(id: string) {
     setSelectedId(id);
@@ -124,9 +143,14 @@ export function StreamWorkMap({
   useLayoutEffect(() => {
     const el = container.current;
     if (!el) return;
-    const observer = new ResizeObserver(() => setWidth(el.getBoundingClientRect().width));
-    setWidth(el.getBoundingClientRect().width);
+    const measure = () => {
+      setWidth(el.getBoundingClientRect().width);
+      setCanvasWidth(Math.max(1, (graph.current?.getBoundingClientRect().width ?? 800) - 24));
+    };
+    const observer = new ResizeObserver(measure);
+    measure();
     observer.observe(el);
+    if (graph.current) observer.observe(graph.current);
     return () => observer.disconnect();
   }, []);
   useLayoutEffect(() => {
@@ -184,7 +208,7 @@ export function StreamWorkMap({
     observer.observe(el);
     el.querySelectorAll('[data-map-node], [data-map-card]').forEach((n) => observer.observe(n));
     return () => observer.disconnect();
-  }, [data, mode, selected?.id]);
+  }, [data, mode, selected?.id, direction, canvasWidth]);
   const groups = [
     ...data.groups,
     ...(data.nodes.some((n) => n.reference)
@@ -223,6 +247,15 @@ export function StreamWorkMap({
         className={`work-map-item${n.quiet ? ' is-quiet' : ''}`}
         data-map-card={n.id}
         data-tone={n.tone}
+        data-flow-column={!n.quiet ? flow.positions.get(n.id)?.column : undefined}
+        style={
+          !n.quiet && !compact
+            ? {
+                gridColumn: (placement.positions.get(n.id)?.column ?? 0) + 1,
+                gridRow: (placement.positions.get(n.id)?.row ?? 0) + 1,
+              }
+            : undefined
+        }
         role={n.quiet ? 'listitem' : undefined}
       >
         <button
@@ -238,6 +271,11 @@ export function StreamWorkMap({
             {badge(n)}
             {n.reference && <small>Linked</small>}
           </span>
+          {data.groups.length > 1 && !n.quiet && (
+            <small className="map-card-stream">
+              {data.groups.find((g) => g.id === n.groupId)?.title ?? 'Linked work'}
+            </small>
+          )}
           <strong>{n.title}</strong>
           {!n.quiet && n.dependencyAssessment && (
             <small
@@ -274,7 +312,14 @@ export function StreamWorkMap({
           <div className="work-map-caption">
             {(mode === 'map' ? activeEdges : data.edges).length ? (
               <>
-                <span>{mode === 'map' ? 'Arrows' : 'Links'} show prerequisites</span>
+                <span>
+                  {mode === 'map' ? 'Arrows' : 'Links'} show prerequisites
+                  {mode === 'map' && flow.columns > 1
+                    ? direction === 'horizontal'
+                      ? ' · start prerequisites flow left to right'
+                      : ' · start prerequisites flow top to bottom'
+                    : ''}
+                </span>
                 {mode === 'map' && activeEdges.length > 40 && <span>Selected links shown</span>}
               </>
             ) : (
@@ -336,63 +381,81 @@ export function StreamWorkMap({
                 })}
               </svg>
             )}
-            {groups.map((group) => {
-              const header = byId.get(group.id),
-                members = ordered.nodes.filter(
-                  (n) =>
-                    (n.kind !== 'stream' && n.groupId === group.id) ||
-                    (n.reference && n.kind === 'stream' && n.groupId === group.id),
+            <div className="work-map-headings">
+              {groups.map((group) => {
+                const header = byId.get(group.id),
+                  members = ordered.nodes.filter(
+                    (n) =>
+                      (n.kind !== 'stream' && n.groupId === group.id) ||
+                      (n.reference && n.kind === 'stream' && n.groupId === group.id),
+                  );
+                const active = members.filter((n) => !n.quiet);
+                const parent = data.groups.find((g) => g.id === group.parentId);
+                return (
+                  <section
+                    key={group.id}
+                    className="work-map-group"
+                    data-heading-links={activeEdges.some((edge) => edge.targetId === header?.id)}
+                    aria-label={group.id === data.rootId ? 'Work in this stream' : group.title}
+                  >
+                    <div className="work-map-group-heading">
+                      {header ? (
+                        <button
+                          className="text-button"
+                          data-map-node={streamGates.has(header.id) ? undefined : header.id}
+                          aria-pressed={header.id === selected?.id}
+                          onClick={() => select(header.id)}
+                        >
+                          <Layers size={14} aria-hidden="true" />
+                          {group.id === data.rootId ? 'This stream' : group.title}
+                          {group.id !== data.rootId && (
+                            <ChevronRight size={13} aria-hidden="true" />
+                          )}
+                        </button>
+                      ) : (
+                        <h4>{group.title}</h4>
+                      )}
+                      <SessionChips
+                        sessions={header?.sessions}
+                        onMore={() => header && select(header.id)}
+                      />
+                      {header?.dependencyAssessment && (
+                        <span
+                          className="map-relationship-state"
+                          data-assessment={header.dependencyAssessment.state}
+                        >
+                          {relationshipLabel(header.dependencyAssessment)}
+                        </span>
+                      )}
+                      {parent && parent.id !== data.rootId && (
+                        <span className="map-parent">Within {parent.title}</span>
+                      )}
+                    </div>
+                    {!active.length && members.length > 0 && (
+                      <p className="fine">No active work in this stream.</p>
+                    )}
+                    {!members.length && header && <p className="fine">{header.purpose}</p>}
+                  </section>
                 );
-              const active = members.filter((n) => !n.quiet);
-              const parent = data.groups.find((g) => g.id === group.parentId);
-              return (
-                <section
-                  key={group.id}
-                  className="work-map-group"
-                  data-heading-links={activeEdges.some((edge) => edge.targetId === header?.id)}
-                  aria-label={group.id === data.rootId ? 'Work in this stream' : group.title}
-                >
-                  <div className="work-map-group-heading">
-                    {header ? (
-                      <button
-                        className="text-button"
-                        data-map-node={header.id}
-                        aria-pressed={header.id === selected?.id}
-                        onClick={() => select(header.id)}
-                      >
-                        <Layers size={14} aria-hidden="true" />
-                        {group.id === data.rootId ? 'This stream' : group.title}
-                        {group.id !== data.rootId && <ChevronRight size={13} aria-hidden="true" />}
-                      </button>
-                    ) : (
-                      <h4>{group.title}</h4>
-                    )}
-                    <SessionChips
-                      sessions={header?.sessions}
-                      onMore={() => header && select(header.id)}
-                    />
-                    {header?.dependencyAssessment && (
-                      <span
-                        className="map-relationship-state"
-                        data-assessment={header.dependencyAssessment.state}
-                      >
-                        {relationshipLabel(header.dependencyAssessment)}
-                      </span>
-                    )}
-                    {parent && parent.id !== data.rootId && (
-                      <span className="map-parent">Within {parent.title}</span>
-                    )}
-                  </div>
-                  {active.length > 0 && (
-                    <div className="work-map-nodes">{active.map(nodeButton)}</div>
-                  )}
-                  {!active.length && members.length > 0 && (
-                    <p className="fine">No active work in this stream.</p>
-                  )}
-                  {!members.length && header && <p className="fine">{header.purpose}</p>}
-                </section>
-              );
-            })}
+              })}
+            </div>
+            <div
+              className={`work-map-nodes ${compact ? 'flow-compact' : 'flow-' + direction}`}
+              style={
+                compact
+                  ? undefined
+                  : { gridTemplateColumns: `repeat(${placement.columns}, minmax(0, 340px))` }
+              }
+            >
+              {[...activeNodes]
+                .sort((a, b) => {
+                  if (compact) return 0;
+                  const x = placement.positions.get(a.id)!,
+                    y = placement.positions.get(b.id)!;
+                  return x.row - y.row || x.column - y.column;
+                })
+                .map(nodeButton)}
+            </div>
           </div>
           {ordered.nodes.some((n) => n.quiet && (n.kind !== 'stream' || n.reference)) && (
             <section className="work-map-history" aria-label="Earlier work">

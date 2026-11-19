@@ -245,7 +245,7 @@ export function Oversight({
             </nav>
           )}
           <div className="stream-title">
-            <h2>{s.title}</h2>
+            <h1>{s.title}</h1>
             <StatusBadge state={s.state}>
               {s.state === 'proposed' ? 'Planned' : s.state}
             </StatusBadge>
