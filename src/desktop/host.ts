@@ -60,7 +60,7 @@ try {
     try {
       pid = Number(readFileSync(join(lock, 'pid'), 'utf8'));
     } catch {
-      throw new DesktopError('Another Work Inbox service is starting. Try again shortly.');
+      throw new DesktopError('Another Rheo service is starting. Try again shortly.');
     }
     let alive = Number.isInteger(pid) && pid > 0;
     if (alive) {
@@ -70,7 +70,7 @@ try {
         if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false;
       }
     }
-    if (alive) throw new DesktopError('Work Inbox is already running.');
+    if (alive) throw new DesktopError('Rheo is already running.');
     rmSync(lock, { recursive: true, force: true });
   }
   mkdirSync(lock, { mode: 0o700 });
@@ -83,7 +83,7 @@ try {
     probe.once('error', () =>
       fail(
         new DesktopError(
-          `Port ${port} is already in use. Quit the other local server, then restart Work Inbox.`,
+          `Port ${port} is already in use. Quit the other local server, then restart Rheo.`,
         ),
       ),
     );
@@ -110,7 +110,7 @@ try {
       message:
         error instanceof DesktopError
           ? error.message
-          : 'Work Inbox could not start. Check the app installation and available disk space, then try again.',
+          : 'Rheo could not start. Check the app installation and available disk space, then try again.',
     });
     // Leave the safe error status for the native launcher, but relinquish ownership.
     rmSync(lock, { recursive: true, force: true });

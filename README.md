@@ -1,17 +1,19 @@
-# Work Inbox
+# Rheo
+
+Rheo (REE-oh), formerly Work Inbox, keeps work streams, progress, and agent context connected. Existing installations keep their data and connections.
 
 Understand what your agents are working toward, how the work connects, and where they need you.
 
-Work Inbox is a local Mac app with streams, a work map/list, explicit prerequisites, progress and simple human requests. Agents maintain shared context through MCP while you keep working in their usual chats. Routine changes do not need acceptance in the app. Work Inbox tracks coordination; it does not run coding agents.
+Rheo is a local Mac app with streams, a work map/list, explicit prerequisites, progress and simple human requests. Agents maintain shared context through MCP while you keep working in their usual chats. Routine changes do not need acceptance in the app. Rheo tracks coordination; it does not run coding agents.
 
-Current private trial: **0.8.1**, agent workflow **1.6.0**. The desktop target is **Apple Silicon, macOS 13 or newer**. Each Mac has its own inbox and agent connections; work does not synchronize between computers.
+Current private trial: **0.9.0**, agent workflow **1.6.0**. The desktop target is **Apple Silicon, macOS 13 or newer**. Each Mac has its own inbox and agent connections; work does not synchronize between computers.
 
 ## Install on another Mac
 
 1. Download the Apple Silicon DMG and `SHA256SUMS` from this repository's prerelease, when published. Verify the downloaded file with `shasum -a 256` against its entry in `SHA256SUMS`.
-2. Open the DMG, drag **Work Inbox** into **Applications**, and open it from there. Node, npm and a checkout are not required for the app.
+2. Open the DMG, drag **Rheo** into **Applications**, and open it from there. Node, npm and a checkout are not required for the app.
 3. In **Connections → Connect an agent**, copy the setup prompt into your agent on this Mac. Let it configure the local MCP entry, then verify with the connected `list_work` tool and finish the connection.
-4. Install the **Project workflow** from that connection's setup for a project and an explicitly selected stream/change. Review the client hooks and start a fresh chat if required. A connection alone does not install or verify lifecycle hooks.
+4. Choose **Set up existing work**, add your active project folders, and paste each project prompt into its current agent chat. The agent captures unfinished work, reuses matching streams, and installs project tracking. Return to see context/checkpoint signals; a connection alone does not verify lifecycle hooks.
 
 The current trial installer is **ad-hoc signed, not notarized**. A downloaded copy may be blocked by macOS or your organization's device policy. Build from source on that Mac if permitted, or wait for a Developer ID signed/notarized release; this project does not ask you to disable macOS protections.
 
@@ -25,7 +27,7 @@ The [second-Mac trial guide](docs/second-mac-trial.md) covers first use, agent c
 - **Daily progress** shows changes done today against an editable target, including exact over-goal totals. Each change counts once at its first delivery or manual completion; reopening does not add another credit. The day follows your local timezone. See [counting details](docs/daily-progress-goal.md).
 - **Connections** manages local agent access and project workflow setup. Connection verification is a successful client tool call, not continuous online presence or proof that hooks ran.
 
-Close the window to leave local intake running. Reopen from the Dock, Spotlight or menu bar. **Quit Work Inbox** (⌘Q) stops the app and service. **Launch at Login** is optional. The Mac must be awake with Work Inbox running for agents to reach it.
+Close the window to leave local intake running. Reopen from the Dock, Spotlight or menu bar. **Quit Rheo** (⌘Q) stops the app and service. **Launch at Login** is optional. The Mac must be awake with Rheo running for agents to reach it.
 
 Agents reuse a change and its current approach across implement/check/revise iterations. Explicit dependency reports distinguish assessed independence, prerequisites and uncertainty. Cooperative implementation claims check recorded readiness but do not grant execution permission. An external loop runner can use per-session observe mode, leaving continuation and stopping to that runner. See [agent workflow](docs/agent-workflow.md) and [synchronization](docs/synchronization.md).
 
@@ -49,7 +51,7 @@ npm run desktop:build
 npm run desktop:verify
 ```
 
-Install `release/Work Inbox.app` in Applications, or use the versioned DMG. Launch it once from its installed location before configuring MCP. See [desktop packaging](docs/desktop.md).
+Install `release/Rheo.app` in Applications, or use the versioned DMG. Launch it once from its installed location before configuring MCP. See [desktop packaging](docs/desktop.md).
 
 For development, `npm run dev` starts the backend and Vite UI at **http://127.0.0.1:5173**. Do not run another instance on the same backend port. The application starts without sample work; `npm run demo` explicitly creates labeled examples for source testing.
 
@@ -77,7 +79,7 @@ Agent tools include work capture, stream/context retrieval, explicit dependency 
 
 Desktop data and protected credentials: `~/Library/Application Support/Work Inbox/data/`. Source data: `.data/` in the checkout, unless `WORK_INBOX_DATA_DIR` selects another directory. Logs and stable desktop launchers live outside the app bundle under the same Application Support root.
 
-For a manual desktop backup, quit Work Inbox and copy the **entire data directory** to a private location. For source use, stop the server and copy the entire `.data` directory. A live SQLite file alone may omit WAL contents. Backups include private work and credentials; keep them outside Git and shared artifacts.
+For a manual desktop backup, quit Rheo and copy the **entire data directory** to a private location. For source use, stop the server and copy the entire `.data` directory. A live SQLite file alone may omit WAL contents. Backups include private work and credentials; keep them outside Git and shared artifacts.
 
 To update, back up, quit the app, replace its bundle in Applications, and reopen it. Data and connections remain outside the bundle; the stable launcher pointer is refreshed. Migrations run on startup. Database downgrades are unsupported: a rollback needs the previous app **and its matching stopped-data backup**. The [trial guide](docs/second-mac-trial.md) gives restore steps.
 

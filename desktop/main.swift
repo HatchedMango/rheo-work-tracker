@@ -15,6 +15,8 @@ let support = environment["WORK_INBOX_DESKTOP_HOME"].map { URL(fileURLWithPath: 
 let port = Int(environment["WORK_INBOX_DESKTOP_PORT"] ?? "4310") ?? 4310
 let inboxURL = URL(string: "http://127.0.0.1:\(port)")!
 let resources = Bundle.main.resourceURL!
+// Keep the legacy support root and bundle identity so upgrades retain data and connections.
+let brandIdentity = try RheoIdentity(url: resources.appendingPathComponent("RheoBrand.json"))
 let statusFile = support.appendingPathComponent("desktop-status.json")
 let showNotification = Notification.Name("com.workinbox.desktop.show")
 
@@ -34,7 +36,7 @@ func privateFolder(_ url: URL) throws {
 func errorAlert(_ message: String) {
     if headless { fputs("\(message)\n", stderr); return }
     let alert = NSAlert()
-    alert.messageText = "Work Inbox couldn’t start"
+    alert.messageText = "Rheo couldn’t start"
     alert.informativeText = message
     alert.addButton(withTitle: "OK")
     let app = NSApplication.shared
@@ -107,9 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let service = Service()
     var item: NSStatusItem!
     let stateItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
-    let openItem = NSMenuItem(title: "Open Work Inbox", action: #selector(openInbox), keyEquivalent: "o")
+    let openItem = NSMenuItem(title: "Open Rheo", action: #selector(openInbox), keyEquivalent: "o")
     let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin), keyEquivalent: "")
-    let retryItem = NSMenuItem(title: "Restart Work Inbox", action: #selector(restart), keyEquivalent: "")
+    let retryItem = NSMenuItem(title: "Restart Rheo", action: #selector(restart), keyEquivalent: "")
     var timer: Timer?
     var ready = false
     var quitting = false
@@ -125,8 +127,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         installMainMenu()
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showExistingInstance), name: showNotification, object: support.path)
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "tray", accessibilityDescription: "Work Inbox")
-        item.button?.toolTip = "Work Inbox"
+        item.button?.image = brandIdentity.menuImage()
+        item.button?.toolTip = "Rheo"
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
@@ -144,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(importing)
         menu.addItem(retryItem)
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Work Inbox", action: #selector(quitApp), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Rheo", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
         item.menu = menu
@@ -172,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openItem.isEnabled = false
         startupDeadline = Date().addingTimeInterval(45)
         do { try service.start(importing: importing) }
-        catch { stateItem.title = "Stopped"; errorAlert("The bundled service could not be launched. Reinstall Work Inbox and try again."); return }
+        catch { stateItem.title = "Stopped"; errorAlert("The bundled service could not be launched. Reinstall Rheo and try again."); return }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in self?.checkStartup() }
     }
@@ -191,14 +193,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else if record["state"] as? String == "error", !startupErrorShown {
                 startupErrorShown = true
                 timer?.invalidate()
-                errorAlert(record["message"] as? String ?? "Work Inbox could not start.")
+                errorAlert(record["message"] as? String ?? "Rheo could not start.")
             }
         }
         if Date() > startupDeadline, child.isRunning {
             timer?.invalidate()
             startupErrorShown = true
             service.stop()
-            errorAlert("Startup took too long. Restart Work Inbox to try again.")
+            errorAlert("Startup took too long. Restart Rheo to try again.")
         }
     }
     func didStop() {
@@ -210,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if quitting { NSApp.reply(toApplicationShouldTerminate: true); return }
         if let source = pendingImport { pendingImport = nil; shouldOpen = true; launch(importing: source); return }
         if !service.stopping && !startupErrorShown {
-            errorAlert("The local service stopped. Choose Restart Work Inbox to try again.")
+            errorAlert("The local service stopped. Choose Restart Rheo to try again.")
         }
     }
     @objc func openInbox() {
@@ -222,16 +224,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func reloadInbox() { inboxWindow?.reloadInbox() }
     func installMainMenu() {
         let main = NSMenu()
-        let application = NSMenu(title: "Work Inbox")
-        let show = application.addItem(withTitle: "Open Work Inbox", action: #selector(openInbox), keyEquivalent: "o")
+        let application = NSMenu(title: "Rheo")
+        let show = application.addItem(withTitle: "Open Rheo", action: #selector(openInbox), keyEquivalent: "o")
         show.target = self
         application.addItem(.separator())
-        application.addItem(withTitle: "Hide Work Inbox", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        application.addItem(withTitle: "Hide Rheo", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = application.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         application.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         application.addItem(.separator())
-        let quit = application.addItem(withTitle: "Quit Work Inbox", action: #selector(quitApp), keyEquivalent: "q")
+        let quit = application.addItem(withTitle: "Quit Rheo", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         let appItem = NSMenuItem()
         appItem.submenu = application
@@ -277,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc func importExisting() {
         let picker = NSOpenPanel()
-        picker.title = "Choose the previous Work Inbox data folder"
+        picker.title = "Choose the previous Rheo or Work Inbox data folder"
         picker.message = "Choose the folder containing work.sqlite. Quit the previous server first. Import requires an empty installation and leaves the original files intact."
         picker.canChooseDirectories = true
         picker.canChooseFiles = false
@@ -302,7 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             let alert = NSAlert()
             alert.messageText = "Launch at Login couldn’t be changed"
-            alert.informativeText = "Move Work Inbox to Applications, then try again. You can also manage it in System Settings → General → Login Items."
+            alert.informativeText = "Move Rheo to Applications, then try again. You can also manage it in System Settings → General → Login Items."
             alert.runModal()
         }
     }

@@ -61,7 +61,7 @@ export async function importData(root: string, source: string, origin: string) {
   root = resolve(root);
   source = resolve(source);
   if (!existsSync(join(source, 'work.sqlite')))
-    throw new DesktopError('That folder does not contain a Work Inbox database.');
+    throw new DesktopError('That folder does not contain a Rheo database.');
   source = realpathSync(source);
   if (root === source || root.startsWith(`${source}${sep}`) || source.startsWith(`${root}${sep}`))
     throw new DesktopError('Choose the previous data folder, not this installation.');

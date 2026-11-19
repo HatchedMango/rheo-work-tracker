@@ -34,7 +34,7 @@ final class InboxWindow: NSWindowController, WKNavigationDelegate, WKUIDelegate,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
-        window.title = "Work Inbox"
+        window.title = "Rheo"
         window.minSize = NSSize(width: 760, height: 520)
         window.isReleasedWhenClosed = false
         window.contentView = webView
@@ -109,8 +109,8 @@ final class InboxWindow: NSWindowController, WKNavigationDelegate, WKUIDelegate,
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         guard (error as NSError).code != NSURLErrorCancelled, let window = window else { return }
         let alert = NSAlert()
-        alert.messageText = "Work Inbox couldn’t load"
-        alert.informativeText = "Choose Reload to try again, or restart Work Inbox from the menu bar."
+        alert.messageText = "Rheo couldn’t load"
+        alert.informativeText = "Choose Reload to try again, or restart Rheo from the menu bar."
         alert.addButton(withTitle: "Reload")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in

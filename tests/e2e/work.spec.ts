@@ -10,6 +10,8 @@ async function openDisclosure(target: Page | Locator, label: string) {
 }
 async function openWorkspace(page: Page) {
   await page.goto('/');
+  await expect(page).toHaveTitle('Rheo');
+  await expect(page.getByRole('link', { name: 'Rheo', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Streams', level: 1 })).toBeVisible();
   await expect(page.getByRole('status')).toHaveCount(0);
   await page
@@ -400,12 +402,12 @@ test('guided agent setup checks locally, verifies an actual MCP tool call, and d
   );
   await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
   const setup = await (await created).json();
-  await expect(dialog.getByRole('heading', { name: 'Add Work Inbox to your agent' })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Add Rheo to your agent' })).toBeVisible();
   await expect(
     dialog.getByRole('button', { name: 'Copy setup prompt', exact: true }),
   ).toBeVisible();
   await expect(dialog.locator('.setup-prompt')).toContainText(
-    'Set up Work Inbox as a local MCP server in Codex',
+    'Set up Rheo as a local MCP server in Codex',
   );
   await expect(dialog.getByText('Codex setup command', { exact: true })).not.toBeVisible();
   await dialog.getByText('Manual setup', { exact: true }).click();
@@ -439,9 +441,13 @@ test('guided agent setup checks locally, verifies an actual MCP tool call, and d
     const result = await agent.callTool({ name: 'list_work', arguments: { limit: 1 } });
     expect(result.isError).not.toBe(true);
     await expect(dialog.getByText('Verified', { exact: true })).toBeVisible();
-    await expect(dialog.getByText('Your agent successfully used Work Inbox.')).toBeVisible();
+    await expect(dialog.getByText('Your agent successfully used Rheo.')).toBeVisible();
     await page.screenshot({ path: 'test-results/connection-setup-verified.png', fullPage: true });
     await dialog.getByRole('button', { name: 'Finish connection', exact: true }).click();
+    await page
+      .getByRole('dialog', { name: 'Set up existing work' })
+      .getByRole('button', { name: 'Later', exact: true })
+      .click();
     const row = page.getByRole('listitem').filter({ hasText: 'Browser setup agent' });
     await expect(row.getByText('Verified', { exact: true })).toBeVisible();
     await expect(row.getByText('No progress checkpoint recorded.')).toBeVisible();
@@ -1263,6 +1269,39 @@ test('stream connectors stay solid, separate and clear of cards after rows wrap'
 
   await expect.poll(async () => (await geometry()).collisions).toEqual([]);
   await region.screenshot({ path: 'test-results/stream-connectors-wide.png' });
+  // Finished sources leave the live arrows even when selected. Their recorded
+  // relationships remain available in the inspector.
+  await post(`/work/${sync.id}/tracking`, {
+    revision: sync.tracking.revision,
+    progress: 'delivered',
+    progressNote: 'The prerequisite work is finished.',
+  });
+  await expect(region.locator(`.work-map-edge[data-source="${sync.id}"]`)).toHaveCount(0);
+  await expect(region.locator('.work-map-edge')).toHaveCount(2);
+  await region.locator(`.work-map-node[data-map-node="${sync.id}"]`).click();
+  await expect(region.getByRole('complementary')).toContainText('Feeds into');
+  await expect(region.locator(`.work-map-edge[data-source="${sync.id}"]`)).toHaveCount(0);
+  const response = await page.evaluate(async (id) => {
+    const r = await fetch(`/api/human-actions/${id}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        revision: 1,
+        state: 'done',
+        response: 'Signed in.',
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    });
+    return r.ok;
+  }, action.id);
+  expect(response).toBe(true);
+  await expect(region.locator(`.work-map-edge[data-source="${action.id}"]`)).toHaveCount(0);
+  await expect(region.locator('.work-map-edge')).toHaveCount(1);
+  await region.locator(`.work-map-node[data-map-node="${action.id}"]`).click();
+  await expect(region.getByRole('complementary')).toContainText('Feeds into');
+  await expect(region.locator(`.work-map-edge[data-source="${action.id}"]`)).toHaveCount(0);
+  await expect.poll(async () => (await geometry()).collisions).toEqual([]);
+  await region.screenshot({ path: 'test-results/stream-connectors-finished.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(region.getByRole('button', { name: 'List', exact: true })).toHaveAttribute(
     'aria-pressed',

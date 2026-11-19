@@ -106,22 +106,22 @@ function section(text: string, client: string) {
     text.indexOf(start, first + 1) >= 0 ||
     text.indexOf(end, last + 1) >= 0
   )
-    throw new Error('Malformed or duplicate Work Inbox instruction section.');
+    throw new Error('Malformed or duplicate Rheo instruction section.');
   return { start: first, end: last + end.length, body: text.slice(first, last + end.length) };
 }
 function block(o: SetupOptions) {
   const m = markers(o.client);
-  return `${m.start}\n## Work Inbox\n\nUse the work-inbox skill for work tracked through ${o.serverName}. Load get_workflow and get_stream_context with the explicitly selected stream/change at session start, resume, and after compaction before continuing. Read .work-inbox/${o.client}.json for the explicit streamId/changeId binding, if present. This local manifest contains paths and selection only; never read or print the credential file it references. If there is no selection, ask; never infer one from a repository path. Keep decisions, dependencies, uncertainty, progress, and output evidence current. Claim open work cooperatively, release at handoff, and leave a concise durable handoff. ${humanFacingReminder} Work Inbox grants no execution or Git authority. If unavailable, report the failure; do not treat an empty result as fresh context.\n\nWorkflow version: ${WORKFLOW_VERSION}. Project lifecycle helpers load explicit context and check for saved checkpoints. Review/trust hooks in the client; installed hooks are not proof they have run.\n${m.end}`;
+  return `${m.start}\n## Rheo\n\nUse the work-inbox skill for work tracked through ${o.serverName}. Load get_workflow and get_stream_context with the explicitly selected stream/change at session start, resume, and after compaction before continuing. Read .work-inbox/${o.client}.json for the explicit streamId/changeId binding, if present. This local manifest contains paths and selection only; never read or print the credential file it references. If there is no selection, ask; never infer one from a repository path. Keep decisions, dependencies, uncertainty, progress, and output evidence current. Claim open work cooperatively, release at handoff, and leave a concise durable handoff. ${humanFacingReminder} Rheo grants no execution or Git authority. If unavailable, report the failure; do not treat an empty result as fresh context.\n\nWorkflow version: ${WORKFLOW_VERSION}. Project lifecycle helpers load explicit context and check for saved checkpoints. Review/trust hooks in the client; installed hooks are not proof they have run.\n${m.end}`;
 }
 export function skill() {
-  return `---\nname: work-inbox\ndescription: Use when work is tracked in Work Inbox to recover current context, coordinate changes, and preserve decisions and handoffs.\n---\n\n# Work Inbox\n\n${workflowInstructions}\n\nCall get_workflow for current guidance. get_stream_context accepts streamId or changeId and bounded pagination. Use returned IDs to retrieve full change details and follow each collection cursor. Never invent a binding or choose work on the app's behalf.\n`;
+  return `---\nname: work-inbox\ndescription: Use when work is tracked in Rheo to recover current context, coordinate changes, and preserve decisions and handoffs.\n---\n\n# Rheo\n\n${workflowInstructions}\n\nCall get_workflow for current guidance. get_stream_context accepts streamId or changeId and bounded pagination. Use returned IDs to retrieve full change details and follow each collection cursor. Never invent a binding or choose work on the app's behalf.\n`;
 }
 function assets(o: SetupOptions) {
   const root = o.client === 'codex' ? '.agents/skills/work-inbox' : '.claude/skills/work-inbox';
   const files = [{ path: `${root}/SKILL.md`, content: skill() }];
   if (o.client === 'codex') {
     const pluginRoot = '.work-inbox/codex-plugin';
-    const onboarding = `---\nname: setup\ndescription: Check Work Inbox workflow setup and retrieve current context using the existing MCP connection.\n---\n\nRead the project's .work-inbox/codex.json binding for explicit stream/change IDs; never read the protected credential file. Use get_workflow and get_stream_context from ${o.serverName}. If unbound, show stream choices and ask for selection. Do not create sample work. A successful launcher check does not verify client connectivity. Report missing tools and request a client reload/new chat if needed. Guidance installed, connectivity, and observed context retrieval are separate checks.\n`;
+    const onboarding = `---\nname: setup\ndescription: Check Rheo workflow setup and retrieve current context using the existing MCP connection.\n---\n\nRead the project's .work-inbox/codex.json binding for explicit stream/change IDs; never read the protected credential file. Use get_workflow and get_stream_context from ${o.serverName}. If unbound, show stream choices and ask for selection. Do not create sample work. A successful launcher check does not verify client connectivity. Report missing tools and request a client reload/new chat if needed. Guidance installed, connectivity, and observed context retrieval are separate checks.\n`;
     files.push(
       {
         path: `${pluginRoot}/plugin.json`,
@@ -180,10 +180,10 @@ function settings(project: string, client: SetupOptions['client']) {
 }
 function managedHooks(o: SetupOptions, bindingPath: string) {
   const labels: Record<string, string> = {
-    SessionStart: 'Work Inbox: Load work context',
-    UserPromptSubmit: 'Work Inbox: Refresh context before a prompt',
-    Stop: 'Work Inbox: Check progress is saved',
-    Interrupt: 'Work Inbox: Record interruption',
+    SessionStart: 'Rheo: Load work context',
+    UserPromptSubmit: 'Rheo: Refresh context before a prompt',
+    Stop: 'Rheo: Check progress is saved',
+    Interrupt: 'Rheo: Record interruption',
   };
   return [
     'SessionStart',

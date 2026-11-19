@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStore } from '../src/db/index.js';
@@ -7,6 +7,57 @@ import { Auth } from '../src/services/auth.js';
 import { WorkService } from '../src/services/work.js';
 import { StreamService } from '../src/services/streams.js';
 import { createSchema, listSchema, type Actor } from '../src/shared/contracts.js';
+import { ConnectionService } from '../src/services/connections.js';
+import { randomUUID } from 'node:crypto';
+
+it('adds Claude Code connections while preserving every existing connection and related credential', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rheo-claude-connection-migration-'));
+  const path = join(dir, 'work.sqlite');
+  let store = openStore(path);
+  try {
+    const owner: Actor = { id: 'owner', scope: 'owner', ownerId: 'owner' };
+    const service = new ConnectionService(store, {
+      origin: 'http://127.0.0.1:4310',
+      directory: join(dir, 'connections'),
+      entry: join(process.cwd(), 'dist/mcp/index.js'),
+    });
+    for (const client of ['codex', 'claude-desktop', 'other'] as const)
+      service.create(owner, { client, name: 'Existing ' + client, idempotencyKey: randomUUID() });
+    const oldRows = store.raw
+      .prepare('SELECT * FROM agent_connections ORDER BY id')
+      .all() as Record<string, unknown>[];
+    const credentials = store.raw.prepare('SELECT * FROM credentials ORDER BY id').all();
+    store.raw.exec('DROP TABLE agent_connections');
+    store.raw.exec(readFileSync('src/db/migrations/0002_agent_connections.sql', 'utf8'));
+    store.raw.exec('ALTER TABLE agent_connections ADD COLUMN completedAt INTEGER');
+    const columns = Object.keys(oldRows[0]);
+    const insert = store.raw.prepare(
+      `INSERT INTO agent_connections (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`,
+    );
+    for (const row of oldRows) insert.run(...columns.map((c) => row[c]));
+    store.raw
+      .prepare('DELETE FROM schema_migrations WHERE name=?')
+      .run('0013_claude_code_connections.sql');
+    store.close();
+    store = openStore(path);
+    expect(store.raw.prepare('SELECT * FROM agent_connections ORDER BY id').all()).toEqual(oldRows);
+    expect(store.raw.prepare('SELECT * FROM credentials ORDER BY id').all()).toEqual(credentials);
+    expect(store.raw.pragma('foreign_key_check')).toEqual([]);
+    new ConnectionService(store, {
+      origin: 'http://127.0.0.1:4310',
+      directory: join(dir, 'connections'),
+      entry: join(process.cwd(), 'dist/mcp/index.js'),
+    }).create(owner, { client: 'claude-code', name: 'Work Claude', idempotencyKey: randomUUID() });
+    expect(
+      store.raw
+        .prepare("SELECT count(*) n FROM agent_connections WHERE client='claude-code'")
+        .get(),
+    ).toEqual({ n: 1 });
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 it('adds daily progress preferences without rewriting existing work or inventing completions', () => {
   const dir = mkdtempSync(join(tmpdir(), 'work-inbox-daily-progress-migration-'));
@@ -115,6 +166,8 @@ it('recovers legacy undecided intake once while preserving decisions, closed wor
   let store = openStore(path);
   const owner: Actor = { id: 'owner', scope: 'owner', ownerId: 'owner' };
   try {
+    // Recreate the old system display name: a Rheo upgrade must preserve history attribution.
+    store.raw.prepare("UPDATE actors SET name='Work Inbox' WHERE id='system'").run();
     const auth = new Auth(store);
     const source = auth.actor(auth.register('agent', 'Legacy source').secret, 'bearer');
     const service = new WorkService(store);

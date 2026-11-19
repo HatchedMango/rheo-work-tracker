@@ -140,7 +140,7 @@ server.registerTool(
   'get_workflow',
   {
     description:
-      'Read the maintained Work Inbox agent workflow. Connection success does not verify workflow setup.',
+      'Read the maintained Rheo agent workflow. Connection success does not verify workflow setup.',
     inputSchema: {},
   },
   () => result('get_workflow', () => request('/api/workflow')),

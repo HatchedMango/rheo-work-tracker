@@ -22,7 +22,7 @@ Name the goal the person is trying to accomplish, using a verb and their vocabul
 
 | Field          | Weak wording                          | Useful wording                                                               |
 | -------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| Stream title   | Work Inbox agent workflow             | Get Work Inbox ready for everyday personal use                               |
+| Stream title   | Rheo agent workflow                   | Get Rheo ready for everyday personal use                                     |
 | Change title   | Implement persistence layer           | Keep unfinished work when the app restarts                                   |
 | Progress       | Migration 0008 applied; 23 tests pass | Your work now survives app restarts; agent reconnection still needs checking |
 | Human request  | Configuration dependency              | Get API access from Bob                                                      |

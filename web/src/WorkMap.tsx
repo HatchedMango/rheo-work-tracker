@@ -59,8 +59,10 @@ export function StreamWorkMap({
     response?: string;
   }>;
 }) {
-  const ordered = orderMapNodes(data.nodes, data.edges),
-    byId = new Map(data.nodes.map((n) => [n.id, n]));
+  const byId = new Map(data.nodes.map((n) => [n.id, n]));
+  // Finished work stays in history/details, but no longer sends arrows through the live map.
+  const activeEdges = data.edges.filter((e) => byId.get(e.sourceId)?.quiet === false);
+  const ordered = orderMapNodes(data.nodes, activeEdges);
   const fallback =
     ordered.nodes.find((n) => n.tone === 'attention' && !n.quiet && !n.reference) ??
     ordered.nodes.find((n) => n.tone === 'active' && !n.quiet && !n.reference) ??
@@ -164,13 +166,15 @@ export function StreamWorkMap({
         }),
       );
       setPaths(
-        data.edges
+        activeEdges
           .filter(
             (e) =>
-              data.edges.length <= 40 || e.sourceId === selected?.id || e.targetId === selected?.id,
+              activeEdges.length <= 40 ||
+              e.sourceId === selected?.id ||
+              e.targetId === selected?.id,
           )
           .flatMap((edge, index) => {
-            const siblings = data.edges
+            const siblings = activeEdges
               .filter((e) => e.targetId === edge.targetId)
               .sort(
                 (a, b) => a.sourceId.localeCompare(b.sourceId) || a.stage.localeCompare(b.stage),
@@ -269,7 +273,24 @@ export function StreamWorkMap({
   return (
     <section className="stream-work" aria-label="Stream work" ref={container}>
       <div className="stream-work-toolbar">
-        <h3>Work</h3>
+        <div className="stream-work-heading">
+          <h3>Work</h3>
+          <div className="work-map-caption">
+            {(mode === 'map' ? activeEdges : data.edges).length ? (
+              <>
+                <span>{mode === 'map' ? 'Arrows' : 'Links'} show prerequisites</span>
+                {mode === 'map' && activeEdges.length > 40 && <span>Selected links shown</span>}
+              </>
+            ) : (
+              <span>
+                {mode === 'map' && data.edges.length
+                  ? 'No active prerequisite arrows'
+                  : `No prerequisite links recorded${data.complete ? '' : ' in this view'}`}
+              </span>
+            )}
+            {ordered.stagedLoop && <span>Some relationships apply at different stages.</span>}
+          </div>
+        </div>
         <div className="tabs" role="group" aria-label="Work presentation">
           <button
             type="button"
@@ -300,17 +321,6 @@ export function StreamWorkMap({
           .
         </p>
       )}
-      <div className="work-map-caption">
-        {data.edges.length ? (
-          <>
-            <span>{mode === 'map' ? 'Arrows' : 'Links'} show prerequisites</span>
-            {mode === 'map' && data.edges.length > 40 && <span>Selected links shown</span>}
-          </>
-        ) : (
-          <span>No prerequisite links recorded{data.complete ? '' : ' in this view'}</span>
-        )}
-        {ordered.stagedLoop && <span>Some relationships apply at different stages.</span>}
-      </div>
       <div className={`work-map-layout mode-${mode}`}>
         <div className="work-map-groups" ref={graph}>
           {mode === 'map' && (
@@ -363,6 +373,7 @@ export function StreamWorkMap({
               <section
                 key={group.id}
                 className="work-map-group"
+                data-heading-links={activeEdges.some((edge) => edge.targetId === header?.id)}
                 aria-label={group.id === data.rootId ? 'Work in this stream' : group.title}
               >
                 <div className="work-map-group-heading">

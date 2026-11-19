@@ -42,3 +42,22 @@ export const agentActivitySchema = z.discriminatedUnion('kind', [
   }),
 ]);
 export type ConnectionClient = z.infer<typeof connectionClientSchema>;
+
+export const existingProjectsSchema = z
+  .object({
+    projects: z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(4096)
+          .regex(/^[^\x00\r\n]+$/),
+      )
+      .min(1)
+      .max(10),
+  })
+  .strict();
+export const existingProjectStatusSchema = existingProjectsSchema.extend({
+  since: z.number().int().nonnegative(),
+});

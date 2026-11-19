@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConnectionService } from '../services/connections.js';
+import { ExistingWorkService } from '../services/existing-work.js';
 import { connectionCreateSchema, agentActivitySchema } from '../shared/connections.js';
 import { z, ZodError } from 'zod';
 import { Auth } from '../services/auth.js';
@@ -217,6 +218,13 @@ export async function createApp(
   });
   app.get('/api/connections/:id/setup', async (req) =>
     connections.setup(authenticate(req), idOf(req.params)),
+  );
+  const existingWork = new ExistingWorkService(connections);
+  app.post('/api/connections/:id/existing-work', async (req) =>
+    existingWork.prepare(writeActor(req), idOf(req.params), req.body),
+  );
+  app.post('/api/connections/:id/existing-work/status', async (req) =>
+    existingWork.status(writeActor(req), idOf(req.params), req.body),
   );
   app.post('/api/connections/:id/check', async (req) => {
     const actor = writeActor(req);

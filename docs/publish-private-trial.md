@@ -52,18 +52,18 @@ npm run desktop:verify
 npm run release:check
 ```
 
-Run a redacted all-history Gitleaks scan before uploading. Inspect `release/Work-Inbox-0.8.1-macOS-arm64.build.json`; sourceDirty must be false. Check that no `v0.8.1` tag/release conflicts with an existing artifact. Keep the repository private, and publish only these files:
+Run a redacted all-history Gitleaks scan before uploading. Inspect `release/Rheo-0.9.0-macOS-arm64.build.json`; sourceDirty must be false. Check that no `v0.9.0` tag/release conflicts with an existing artifact. Keep the repository private, and publish only these files:
 
 ```sh
-gh release create v0.8.1 \
+gh release create v0.9.0 \
   --repo HatchedMango/WorkInbox \
   --target "$(git rev-parse HEAD)" \
   --prerelease \
-  --title 'Work Inbox 0.8.1 — private Mac trial' \
-  --notes-file docs/releases/0.8.1.md \
-  release/Work-Inbox-0.8.1-macOS-arm64.dmg \
-  release/Work-Inbox-0.8.1-macOS-arm64.zip \
-  release/Work-Inbox-0.8.1-macOS-arm64.build.json \
+  --title 'Rheo 0.9.0 — private Mac trial' \
+  --notes-file docs/releases/0.9.0.md \
+  release/Rheo-0.9.0-macOS-arm64.dmg \
+  release/Rheo-0.9.0-macOS-arm64.zip \
+  release/Rheo-0.9.0-macOS-arm64.build.json \
   release/SHA256SUMS
 ```
 

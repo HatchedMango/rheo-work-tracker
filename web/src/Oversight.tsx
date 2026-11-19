@@ -229,22 +229,28 @@ export function Oversight({
             {error}
           </p>
         )}
-        <button className="text-button" onClick={() => onStream(null)}>
-          <ArrowLeft size={14} />
-          All streams
-        </button>
-        <nav className="breadcrumbs" aria-label="Stream ancestry">
-          {[...detail.ancestors].reverse().map((p) => (
-            <button key={p.id} className="text-button" onClick={() => onStream(p.id)}>
-              {p.title}
-              <ChevronRight size={12} />
-            </button>
-          ))}
-        </nav>
-        <div className="stream-title">
-          <h2>{s.title}</h2>
-          <StatusBadge state={s.state}>{s.state === 'proposed' ? 'Planned' : s.state}</StatusBadge>
-        </div>
+        <header className="stream-detail-header">
+          <button className="text-button" onClick={() => onStream(null)}>
+            <ArrowLeft size={14} />
+            All streams
+          </button>
+          {detail.ancestors.length > 0 && (
+            <nav className="breadcrumbs" aria-label="Stream ancestry">
+              {[...detail.ancestors].reverse().map((p) => (
+                <button key={p.id} className="text-button" onClick={() => onStream(p.id)}>
+                  {p.title}
+                  <ChevronRight size={12} />
+                </button>
+              ))}
+            </nav>
+          )}
+          <div className="stream-title">
+            <h2>{s.title}</h2>
+            <StatusBadge state={s.state}>
+              {s.state === 'proposed' ? 'Planned' : s.state}
+            </StatusBadge>
+          </div>
+        </header>
         {map && map.rootId === s.id ? (
           <StreamWorkMap
             key={s.id}

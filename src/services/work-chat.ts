@@ -105,7 +105,7 @@ export class WorkChatService {
         /* Offer a visible recovery. */
       }
     const s = w.tracking.streamId ? this.streams.get(a, w.tracking.streamId) : null;
-    const recovery = `${mode === 'resume' ? 'Resume' : 'Start'} work on the explicitly selected Work Inbox change below. Read current get_workflow and get_stream_context for changeId ${id}${s ? ` and streamId ${s.id}` : ''} before relying on this snapshot. Use the project’s installed workflow helper to select this change for the native session ID supplied by the client; preserve the project default binding. Never invent a session identity. If lifecycle selection is unavailable, report that limit and use explicit work context. Inspect current repository files and relevant decisions/output records as needed. Follow real prerequisite and cooperative claim checks before implementation. Do not treat opening this chat as reported progress or create a new work item.`;
+    const recovery = `${mode === 'resume' ? 'Resume' : 'Start'} work on the explicitly selected Rheo change below. Read current get_workflow and get_stream_context for changeId ${id}${s ? ` and streamId ${s.id}` : ''} before relying on this snapshot. Use the project’s installed workflow helper to select this change for the native session ID supplied by the client; preserve the project default binding. Never invent a session identity. If lifecycle selection is unavailable, report that limit and use explicit work context. Inspect current repository files and relevant decisions/output records as needed. Follow real prerequisite and cooperative claim checks before implementation. Do not treat opening this chat as reported progress or create a new work item.`;
     const snapshot = {
       changeId: id,
       title: w.title,

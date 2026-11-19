@@ -4,7 +4,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 const root = resolve(process.argv[2] ?? 'release');
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-const stem = `Work-Inbox-${pkg.version}-macOS-arm64`;
+const stem = `Rheo-${pkg.version}-macOS-arm64`;
 const names = [`${stem}.zip`, `${stem}.dmg`, `${stem}.build.json`];
 const manifest = readFileSync(join(root, 'SHA256SUMS'), 'utf8').trim().split('\n');
 if (manifest.length !== names.length) throw new Error('Unexpected checksum manifest entries.');
@@ -30,7 +30,7 @@ if (
   throw new Error('Release source differs from this checkout.');
 if (metadata.node !== 'v' + readFileSync('.nvmrc', 'utf8').trim())
   throw new Error('Release runtime does not match .nvmrc.');
-const resources = join(root, 'Work Inbox.app/Contents/Resources');
+const resources = join(root, 'Rheo.app/Contents/Resources');
 if (
   JSON.stringify(JSON.parse(readFileSync(join(resources, 'BUILD_INFO.json'), 'utf8'))) !==
   JSON.stringify(metadata)
@@ -59,11 +59,9 @@ if (
   !existsSync(join(resources, 'THIRD_PARTY_LICENSES.txt'))
 )
   throw new Error('Missing runtime/dependency notices.');
-execFileSync(
-  '/usr/bin/codesign',
-  ['--verify', '--deep', '--strict', join(root, 'Work Inbox.app')],
-  { stdio: 'inherit' },
-);
+execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', join(root, 'Rheo.app')], {
+  stdio: 'inherit',
+});
 console.log(
   `Release ${pkg.version}: ${names.length} checksummed assets; clean source ${metadata.sourceCommit}; ${files} packaged files inspected; ${metadata.signing}, notarized=${metadata.notarized}.`,
 );

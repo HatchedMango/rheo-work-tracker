@@ -62,6 +62,10 @@ test('whole work cards keep their tone with selection, chat footers, hover and n
   const card = (id: string) => page.locator(`[data-map-card="${id}"]`);
   await expect(card(human.id)).toBeVisible();
   await page.getByRole('button', { name: 'Map', exact: true }).click();
+  const streamTitle = await page.locator('.stream-title').boundingBox();
+  const firstCard = await card(human.id).boundingBox();
+  expect(firstCard!.y - (streamTitle!.y + streamTitle!.height)).toBeLessThan(130);
+  await expect(page.getByRole('navigation', { name: 'Stream ancestry' })).toHaveCount(0);
   async function check() {
     for (const [id, color] of [
       [human.id, 'rgb(248, 243, 252)'],
@@ -106,5 +110,9 @@ test('whole work cards keep their tone with selection, chat footers, hover and n
   await page.setViewportSize({ width: 390, height: 844 });
   await check();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // The stream caption must not be squeezed under full-width mobile tabs.
+  const caption = await page.locator('.work-map-caption').boundingBox();
+  const tabs = await page.getByRole('group', { name: 'Work presentation' }).boundingBox();
+  expect(caption!.x + caption!.width).toBeLessThanOrEqual(tabs!.x);
   await page.screenshot({ path: 'test-results/card-surfaces-mobile.png', fullPage: true });
 });

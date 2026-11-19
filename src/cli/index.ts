@@ -17,7 +17,7 @@ const command = process.argv[2];
 try {
   if (command === 'setup') {
     console.log(
-      `Work Inbox initialized. Data: ${dataDir}\nStart the app with npm run build && npm start.`,
+      `Rheo initialized. Data: ${dataDir}\nStart the app with npm run build && npm start.`,
     );
     console.log(`Open ${origin} to use your local workspace. No sign-in is needed.`);
   } else if (command === 'agent') {

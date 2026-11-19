@@ -1,3 +1,4 @@
+import { BrandMark } from './BrandMark.js';
 import { StartWork } from './StartWork.js';
 import { DailyProgress } from './DailyProgress.js';
 import { Sessions } from './Sessions.js';
@@ -354,9 +355,9 @@ function App() {
           }}
         >
           <span className="brand-icon">
-            <Layers3 size={21} />
+            <BrandMark size={26} />
           </span>
-          Work Inbox
+          Rheo
         </a>
         <nav aria-label="Primary">
           <button

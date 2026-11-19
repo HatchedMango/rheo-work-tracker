@@ -42,7 +42,7 @@ export function openStore(path: string) {
       workspaceId: 'local',
       ownerId: 'owner',
       kind: 'integration',
-      name: 'Work Inbox',
+      name: 'Rheo',
     })
     .onConflictDoNothing()
     .run();

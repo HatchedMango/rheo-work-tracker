@@ -109,7 +109,12 @@ button svg {
 }
 .brand-icon {
   display: flex;
-  color: var(--ink);
+  flex: none;
+  color: var(--accent);
+}
+.brand-icon svg {
+  display: block;
+  flex: none;
 }
 .sidebar nav {
   display: grid;
@@ -1192,6 +1197,7 @@ button svg {
   }
   .brand-icon svg {
     width: 19px;
+    height: 19px;
   }
   .sidebar nav {
     display: flex;
@@ -1861,7 +1867,26 @@ button svg {
   font-size: 14px;
   font-weight: 600;
 }
+.stream-detail-header {
+  display: grid;
+  gap: 12px;
+}
+.stream-detail-header > .text-button {
+  justify-self: start;
+}
+.stream-detail-header .breadcrumbs {
+  margin: 0;
+}
+.stream-title {
+  align-items: flex-start;
+}
+.stream-title > .badge {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
 .stream-title h2 {
+  margin: 0;
+  line-height: 1.25;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -2110,7 +2135,7 @@ button svg {
 
 /* Stream work is the primary surface; composition groups do not imply dependencies. */
 .stream-work {
-  margin-top: 24px;
+  margin-top: 20px;
   min-width: 0;
 }
 .stream-work-toolbar {
@@ -2118,16 +2143,28 @@ button svg {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 10px;
+  margin-bottom: 16px;
+}
+.stream-work-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  min-width: 0;
 }
 .stream-work-toolbar h3 {
   margin: 0;
   font-size: 16px;
 }
 .stream-work-toolbar .tabs {
+  width: auto;
   margin: 0;
+  min-height: 34px;
+  flex-shrink: 0;
+  gap: 8px;
 }
 .stream-work-toolbar .tabs button {
+  height: 34px;
   padding: 7px 12px;
 }
 .work-map-caption {
@@ -2137,7 +2174,7 @@ button svg {
   gap: 6px 16px;
   color: var(--muted);
   font-size: 12px;
-  margin-bottom: 18px;
+  margin: 0;
 }
 .map-incomplete {
   padding: 12px 14px;
@@ -2156,7 +2193,6 @@ button svg {
   position: relative;
   min-width: 0;
   padding-left: 32px;
-  padding-top: 10px;
 }
 .mode-list .work-map-groups {
   padding: 0;
@@ -2202,6 +2238,9 @@ button svg {
   flex-wrap: wrap;
   align-items: center;
   gap: 5px 12px;
+  margin-bottom: 16px;
+}
+.mode-map .work-map-group[data-heading-links='true'] .work-map-group-heading {
   margin-bottom: 32px;
 }
 .mode-list .work-map-group-heading {
@@ -2994,4 +3033,84 @@ button svg {
   .daily-progress-footer {
     padding-top: 6px;
   }
+}
+
+.existing-work-dialog {
+  width: min(680px, calc(100vw - 30px));
+}
+.existing-work-dialog p {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.existing-work-dialog .fine {
+  font-size: 12px;
+  color: var(--muted);
+}
+.existing-work-dialog textarea {
+  font:
+    12px/1.7 ui-monospace,
+    monospace;
+}
+.existing-projects {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  margin: 22px 0;
+}
+.existing-projects > li {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  padding: 18px;
+}
+.existing-project-heading {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+.existing-project-heading svg {
+  flex: none;
+  color: var(--accent);
+}
+.existing-project-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.existing-project-path {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  margin: 7px 0 14px;
+  font-size: 11px !important;
+}
+.existing-project-progress {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 16px 0;
+}
+.existing-project-progress > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.existing-project-progress .observed {
+  color: var(--accent);
+}
+.progress-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--line);
+  margin: 0 4px;
+}
+.existing-projects summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.connection-actions {
+  flex-wrap: wrap;
+  align-items: center;
 }

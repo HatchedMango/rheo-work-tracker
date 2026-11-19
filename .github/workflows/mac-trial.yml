@@ -28,11 +28,11 @@ jobs:
       - name: Upload only distributable trial files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: Work-Inbox-macOS-arm64-${{ github.sha }}
+          name: Rheo-macOS-arm64-${{ github.sha }}
           path: |
-            release/Work-Inbox-*-macOS-arm64.zip
-            release/Work-Inbox-*-macOS-arm64.dmg
-            release/Work-Inbox-*-macOS-arm64.build.json
+            release/Rheo-*-macOS-arm64.zip
+            release/Rheo-*-macOS-arm64.dmg
+            release/Rheo-*-macOS-arm64.build.json
             release/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

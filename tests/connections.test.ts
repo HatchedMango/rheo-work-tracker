@@ -1,5 +1,15 @@
 import { it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, statSync, readdirSync } from 'node:fs';
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  statSync,
+  readdirSync,
+  mkdirSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -18,7 +28,7 @@ let dir: string,
   origin: string,
   host: string;
 beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'work-inbox-connections-'));
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'work-inbox-connections-')));
   const reservation = createServer();
   await new Promise<void>((r) => reservation.listen(0, '127.0.0.1', r));
   port = (reservation.address() as { port: number }).port;
@@ -314,4 +324,204 @@ it('terminates Claude Code variadic environment options before the server name',
   );
   expect(config.setupPrompt).toContain('Claude Code');
   expect(config.workflowPrompt).toContain('SessionStart');
+});
+
+async function readyConnection(client = 'claude-code') {
+  const result = await create(client);
+  store.raw
+    .prepare('UPDATE agent_connections SET lastToolAt=?,completedAt=? WHERE id=?')
+    .run(Date.now(), Date.now(), result.setup.id);
+  const credential = JSON.parse(
+    readFileSync(result.setup.launch.env.WORK_INBOX_CREDENTIAL_FILE, 'utf8'),
+  );
+  return {
+    ...result,
+    agentHeaders: { host, authorization: `Bearer ${credential.token}` },
+    token: credential.token,
+  };
+}
+
+it('prepares scoped existing-project handoffs without changing work, files, credentials or completion credit', async () => {
+  const { setup, headers, token } = await readyConnection();
+  const project = join(dir, "Client's $(project)");
+  mkdirSync(project);
+  const guidance = join(project, 'CLAUDE.md');
+  writeFileSync(guidance, 'Keep existing guidance.');
+  const alias = join(dir, 'alias');
+  symlinkSync(project, alias);
+  const request = () =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/connections/${setup.id}/existing-work`,
+      headers,
+      payload: { projects: [project, alias, project] },
+    });
+  const first = await request();
+  expect(first.statusCode).toBe(200);
+  expect(first.json().projects).toHaveLength(1);
+  const prompt = first.json().projects[0].prompt;
+  expect(prompt).toContain(JSON.stringify(project));
+  expect(prompt).toContain(setup.serverName);
+  expect(prompt).toContain('Reuse matching streams and unfinished changes');
+  expect(prompt).toContain('Keep completed history as context');
+  expect(prompt).toContain('never invent IDs');
+  expect(prompt).toContain('\n\nUse this local helper');
+  expect(prompt).not.toContain('\\n\\nUse this local helper');
+  expect(first.body).not.toContain(token);
+  expect((await request()).json().projects).toEqual(first.json().projects);
+  expect(readFileSync(guidance, 'utf8')).toBe('Keep existing guidance.');
+  expect(store.raw.prepare('SELECT count(*) n FROM work').get()).toEqual({ n: 0 });
+  expect(store.raw.prepare('SELECT count(*) n FROM streams').get()).toEqual({ n: 0 });
+  expect(store.raw.prepare('SELECT count(*) n FROM change_completions').get()).toEqual({ n: 0 });
+  expect(store.raw.prepare('SELECT count(*) n FROM agent_connections').get()).toEqual({ n: 1 });
+});
+
+it('requires owner access, a verified supported connection and explicit real project folders', async () => {
+  const { setup, headers, agentHeaders } = await readyConnection();
+  const url = `/api/connections/${setup.id}/existing-work`;
+  const post = (payload: unknown, h: Record<string, string> = headers, path = url) =>
+    ctx.app.inject({ method: 'POST', url: path, headers: h, payload: payload as object });
+  expect((await post({ projects: [dir] }, agentHeaders)).statusCode).toBe(403);
+  expect(
+    (await post({ projects: [dir], since: 0 }, agentHeaders, url + '/status')).statusCode,
+  ).toBe(403);
+  for (const projects of [
+    [],
+    ['relative'],
+    [dir + '-missing'],
+    Array(11).fill(dir),
+    ['/tmp/\ninvalid'],
+  ])
+    expect((await post({ projects })).statusCode).toBe(400);
+  const file = join(dir, 'file');
+  writeFileSync(file, 'not a directory');
+  expect((await post({ projects: [file] })).statusCode).toBe(400);
+  expect(
+    (await post({ projects: [dir], since: Date.now() + 100000 }, headers, url + '/status'))
+      .statusCode,
+  ).toBe(400);
+  const pending = await create();
+  expect(
+    (
+      await post(
+        { projects: [dir] },
+        pending.headers,
+        `/api/connections/${pending.setup.id}/existing-work`,
+      )
+    ).statusCode,
+  ).toBe(409);
+  const unsupported = await readyConnection('claude-desktop');
+  expect(
+    (
+      await post(
+        { projects: [dir] },
+        unsupported.headers,
+        `/api/connections/${unsupported.setup.id}/existing-work`,
+      )
+    ).statusCode,
+  ).toBe(400);
+  await ctx.app.inject({
+    method: 'POST',
+    url: `/api/connections/${setup.id}/disconnect`,
+    headers,
+    payload: {},
+  });
+  expect((await post({ projects: [dir] })).statusCode).toBe(409);
+});
+
+it('observes only fresh context and current checkpoints from the selected connection and project', async () => {
+  const { setup, headers, agentHeaders } = await readyConnection();
+  const project = join(dir, 'active');
+  mkdirSync(project);
+  const otherProject = join(dir, 'other');
+  mkdirSync(otherProject);
+  const endpoint = `/api/connections/${setup.id}/existing-work`;
+  const prepared = await ctx.app.inject({
+    method: 'POST',
+    url: endpoint,
+    headers,
+    payload: { projects: [project, otherProject] },
+  });
+  const since = prepared.json().preparedAt;
+  const status = async () => {
+    const r = await ctx.app.inject({
+      method: 'POST',
+      url: endpoint + '/status',
+      headers,
+      payload: { projects: [project, otherProject], since },
+    });
+    expect(r.statusCode).toBe(200);
+    return r.json().projects;
+  };
+  expect((await status()).map((p: { contextAt: number | null }) => p.contextAt)).toEqual([
+    null,
+    null,
+  ]);
+  const s = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/streams',
+    headers: agentHeaders,
+    payload: {
+      title: 'Ship the active project',
+      outcome: 'Finish the current work',
+      idempotencyKey: randomUUID(),
+    },
+  });
+  expect(s.statusCode).toBe(201);
+  const identity = {
+    client: 'claude-code',
+    sessionId: randomUUID(),
+    project,
+    streamId: s.json().id,
+    turnId: 'first',
+  };
+  const sync = async (event: string, extras: object = {}) => {
+    const r = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/sync/events',
+      headers: agentHeaders,
+      payload: { ...identity, eventId: randomUUID(), occurredAt: Date.now(), event, ...extras },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().session.sessionId).toBe(identity.sessionId);
+  };
+  await sync('start');
+  expect((await status())[0]).toMatchObject({ contextAt: expect.any(Number), checkpointAt: null });
+  expect((await status())[1]).toMatchObject({ contextAt: null, checkpointAt: null });
+  await sync('checkpoint', { checkpoint: { summary: 'Current project handoff saved.' } });
+  expect((await status())[0]).toMatchObject({
+    checkpointAt: expect.any(Number),
+    needsUpdate: false,
+  });
+  await sync('prompt', { turnId: 'second' });
+  expect((await status())[0]).toMatchObject({ checkpointAt: null, needsUpdate: true });
+  await sync('checkpoint', {
+    turnId: 'second',
+    checkpoint: { summary: 'Latest project handoff saved.' },
+  });
+  store.raw
+    .prepare('UPDATE workflow_sessions SET pendingWrites=1 WHERE sessionId=?')
+    .run(identity.sessionId);
+  expect((await status())[0]).toMatchObject({ checkpointAt: null, needsUpdate: true });
+  store.raw
+    .prepare(
+      'UPDATE workflow_sessions SET pendingWrites=0,lastContextAt=?,lastCheckpointAt=? WHERE sessionId=?',
+    )
+    .run(since - 1, since - 1, identity.sessionId);
+  store.raw.prepare('DELETE FROM workflow_reads').run();
+  expect((await status())[0]).toMatchObject({ contextAt: null, checkpointAt: null });
+  const other = await readyConnection();
+  await ctx.app.inject({
+    method: 'POST',
+    url: '/api/sync/events',
+    headers: other.agentHeaders,
+    payload: {
+      ...identity,
+      sessionId: randomUUID(),
+      eventId: randomUUID(),
+      occurredAt: Date.now(),
+      event: 'start',
+    },
+  });
+  expect((await status())[0]).toMatchObject({ contextAt: null, checkpointAt: null });
 });

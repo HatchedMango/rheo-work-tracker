@@ -22,6 +22,7 @@ import { openStore } from '../dist/db/index.js';
 import { Auth } from '../dist/services/auth.js';
 import { WorkService } from '../dist/services/work.js';
 import { ConnectionService } from '../dist/services/connections.js';
+import { shellQuote } from '../dist/services/connections.js';
 import { createSchema } from '../dist/shared/contracts.js';
 
 if (process.platform !== 'darwin') throw new Error('Run desktop verification on macOS.');
@@ -46,8 +47,27 @@ for rejected in ["codex://settings", "codex://new?prompt=x&path=relative", "code
   { stdio: 'pipe' },
 );
 console.log('PASS: native existing-chat and unsent-draft allowlist rejects other routes.');
-const app = resolve('release/Work Inbox.app');
+const app = resolve('release/Rheo.app');
 assert(existsSync(app), 'Build the desktop app first.');
+const bundleInfo = JSON.parse(
+  execFileSync(
+    '/usr/bin/plutil',
+    ['-convert', 'json', '-o', '-', join(app, 'Contents/Info.plist')],
+    { encoding: 'utf8' },
+  ),
+);
+assert.equal(bundleInfo.CFBundleDisplayName, 'Rheo');
+assert.equal(
+  bundleInfo.CFBundleIdentifier,
+  'com.workinbox.desktop',
+  'Retain the installed app identity across the rename.',
+);
+assert.equal(bundleInfo.CFBundleExecutable, 'Rheo');
+assert(existsSync(join(app, 'Contents/Resources/Rheo.icns')));
+assert.deepEqual(
+  JSON.parse(readFileSync(join(app, 'Contents/Resources/RheoBrand.json'), 'utf8')),
+  JSON.parse(readFileSync('src/shared/brand.json', 'utf8')),
+);
 const temporary = mkdtempSync(join(tmpdir(), "Work Inbox's verification "));
 const source = join(temporary, 'legacy .data');
 const desktop = join(temporary, 'Application Support', 'Work Inbox');
@@ -61,6 +81,7 @@ const port = await new Promise((done) => {
 const origin = `http://127.0.0.1:${port}`;
 const owner = { id: 'owner', scope: 'owner', ownerId: 'owner' };
 const store = openStore(join(source, 'work.sqlite'));
+store.raw.prepare("UPDATE actors SET name='Work Inbox' WHERE id='system'").run();
 const auth = new Auth(store);
 const connections = new ConnectionService(store, {
   origin,
@@ -87,7 +108,7 @@ const sourceSnapshot = readFileSync(join(source, 'work.sqlite'));
 const children = new Set();
 function start(bundle, root = desktop, extra = [], nativeEventLoop = false) {
   const child = spawn(
-    join(bundle, 'Contents/MacOS/Work Inbox'),
+    join(bundle, 'Contents/MacOS/Rheo'),
     [nativeEventLoop ? '--background' : '--headless', ...extra],
     {
       cwd: tmpdir(),
@@ -225,6 +246,38 @@ try {
     helper = join(desktop, 'bin/work-inbox-workflow');
   mkdirSync(project);
   writeFileSync(join(project, 'CLAUDE.md'), '# Existing project instructions\n');
+  const claudeSetup = await ownerRequest('/api/connections', {
+    client: 'claude-code',
+    name: 'Packaged existing-project agent',
+    idempotencyKey: randomUUID(),
+  });
+  await verifyMcp(claudeSetup.launch, [work.id]);
+  await ownerRequest(`/api/connections/${claudeSetup.id}/complete`, {});
+  const adoption = await ownerRequest(`/api/connections/${claudeSetup.id}/existing-work`, {
+    projects: [project, project],
+  });
+  assert.equal(adoption.projects.length, 1);
+  assert(adoption.projects[0].prompt.includes(claudeSetup.serverName));
+  assert(
+    adoption.projects[0].prompt.includes(shellQuote(join(desktop, 'bin/work-inbox-workflow'))),
+  );
+  const adoptionStatus = await ownerRequest(
+    `/api/connections/${claudeSetup.id}/existing-work/status`,
+    {
+      projects: [project],
+      since: adoption.preparedAt,
+    },
+  );
+  assert.equal(adoptionStatus.projects[0].contextAt, null);
+  assert.equal(adoptionStatus.projects[0].checkpointAt, null);
+  assert.equal(
+    readFileSync(join(project, 'CLAUDE.md'), 'utf8'),
+    '# Existing project instructions\n',
+  );
+  await ownerRequest(`/api/connections/${claudeSetup.id}/disconnect`, {});
+  console.log(
+    'PASS: packaged Claude Code connection and existing-project handoff without automatic work or file changes.',
+  );
   const workflowArgs = [
     '--project',
     project,
@@ -371,7 +424,7 @@ try {
   await until(() => !alive(initialPid), 'Server survived normal native shutdown.');
   assert(!existsSync(join(desktop, 'service.lock')));
   console.log('PASS: duplicate prevention, port-conflict isolation, and clean shutdown.');
-  const moved = join(temporary, 'Moved Applications', 'Work Inbox.app');
+  const moved = join(temporary, 'Moved Applications', 'Rheo.app');
   mkdirSync(join(temporary, 'Moved Applications'));
   cpSync(app, moved, { recursive: true });
   native = start(moved);

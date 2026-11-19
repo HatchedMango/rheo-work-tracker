@@ -15,7 +15,7 @@ import { dirname, join, resolve } from 'node:path';
 if (process.platform !== 'darwin') throw new Error('Build the Mac app on macOS.');
 const run = (command, args) => execFileSync(command, args, { stdio: 'inherit' });
 const root = resolve('release');
-const app = join(root, 'Work Inbox.app');
+const app = join(root, 'Rheo.app');
 const contents = join(app, 'Contents');
 const resources = join(contents, 'Resources');
 const runtime = join(resources, 'runtime');
@@ -111,7 +111,7 @@ function trim(path) {
 trim(payload);
 writeFileSync(
   join(resources, 'THIRD_PARTY_LICENSES.txt'),
-  `Work Inbox ${pkg.version}\n\nNode ${process.version}: runtime/LICENSE\nServer and frontend/build dependency notices: licenses/.\nServer package licenses are also retained within app/node_modules.\n\n${dependencies.sort().join('\n')}\n`,
+  `Rheo ${pkg.version}\n\nNode ${process.version}: runtime/LICENSE\nServer and frontend/build dependency notices: licenses/.\nServer package licenses are also retained within app/node_modules.\n\n${dependencies.sort().join('\n')}\n`,
 );
 const minimum = process.arch === 'arm64' ? 'arm64-apple-macos13.0' : 'x86_64-apple-macos13.0';
 run('xcrun', [
@@ -123,8 +123,9 @@ run('xcrun', [
   minimum,
   'desktop/main.swift',
   'desktop/InboxWindow.swift',
+  'desktop/Brand.swift',
   '-o',
-  join(contents, 'MacOS/Work Inbox'),
+  join(contents, 'MacOS/Rheo'),
 ]);
 writeFileSync(
   join(contents, 'Info.plist'),
@@ -132,9 +133,9 @@ writeFileSync(
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>com.workinbox.desktop</string>
-<key>CFBundleName</key><string>Work Inbox</string>
-<key>CFBundleDisplayName</key><string>Work Inbox</string>
-<key>CFBundleExecutable</key><string>Work Inbox</string>
+<key>CFBundleName</key><string>Rheo</string>
+<key>CFBundleDisplayName</key><string>Rheo</string>
+<key>CFBundleExecutable</key><string>Rheo</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>${pkg.version}</string>
 <key>CFBundleVersion</key><string>${pkg.version}</string>
@@ -142,18 +143,29 @@ writeFileSync(
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-<key>CFBundleIconFile</key><string>WorkInbox.icns</string>
+<key>CFBundleIconFile</key><string>Rheo.icns</string>
 </dict></plist>`,
 );
-run('xcrun', ['swift', 'desktop/Icon.swift', join(root, 'WorkInbox.iconset')]);
+cpSync('src/shared/brand.json', join(resources, 'RheoBrand.json'));
+const iconGenerator = join(root, '.rheo-icon-generator');
+run('xcrun', [
+  'swiftc',
+  '-parse-as-library',
+  'desktop/Brand.swift',
+  'desktop/Icon.swift',
+  '-o',
+  iconGenerator,
+]);
+run(iconGenerator, [join(root, 'Rheo.iconset'), 'src/shared/brand.json']);
+rmSync(iconGenerator);
 run('/usr/bin/iconutil', [
   '-c',
   'icns',
-  join(root, 'WorkInbox.iconset'),
+  join(root, 'Rheo.iconset'),
   '-o',
-  join(resources, 'WorkInbox.icns'),
+  join(resources, 'Rheo.icns'),
 ]);
-rmSync(join(root, 'WorkInbox.iconset'), { recursive: true, force: true });
+rmSync(join(root, 'Rheo.iconset'), { recursive: true, force: true });
 const identity = process.env.MAC_SIGNING_IDENTITY || '-';
 const signing = identity === '-' ? ['--timestamp=none'] : ['--options', 'runtime', '--timestamp'];
 for (const binary of [...native, join(runtime, 'node')]) {
@@ -168,21 +180,21 @@ for (const binary of [...native, join(runtime, 'node')]) {
 }
 run('/usr/bin/codesign', ['--force', '--sign', identity, ...signing, app]);
 run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
-const archive = join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.zip`);
+const archive = join(root, `Rheo-${pkg.version}-macOS-${process.arch}.zip`);
 rmSync(archive, { force: true });
 run('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, archive]);
 if (!process.argv.includes('--no-dmg')) {
   const staging = join(root, '.dmg');
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging);
-  cpSync(app, join(staging, 'Work Inbox.app'), { recursive: true });
+  cpSync(app, join(staging, 'Rheo.app'), { recursive: true });
   run('/bin/ln', ['-s', '/Applications', join(staging, 'Applications')]);
-  const image = join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.dmg`);
+  const image = join(root, `Rheo-${pkg.version}-macOS-${process.arch}.dmg`);
   rmSync(image, { force: true });
   run('/usr/bin/hdiutil', [
     'create',
     '-volname',
-    'Work Inbox',
+    'Rheo',
     '-srcfolder',
     staging,
     '-format',
@@ -191,14 +203,14 @@ if (!process.argv.includes('--no-dmg')) {
   ]);
   rmSync(staging, { recursive: true, force: true });
 }
-const metadata = join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.build.json`);
+const metadata = join(root, `Rheo-${pkg.version}-macOS-${process.arch}.build.json`);
 writeFileSync(metadata, JSON.stringify(buildInfo, null, 2) + '\n');
 const assets = [
   archive,
   metadata,
   ...(process.argv.includes('--no-dmg')
     ? []
-    : [join(root, `Work-Inbox-${pkg.version}-macOS-${process.arch}.dmg`)]),
+    : [join(root, `Rheo-${pkg.version}-macOS-${process.arch}.dmg`)]),
 ];
 writeFileSync(
   join(root, 'SHA256SUMS'),

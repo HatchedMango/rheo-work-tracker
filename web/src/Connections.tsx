@@ -5,6 +5,7 @@ import { X, Copy, ArrowUpRight, Check } from 'lucide-react';
 import type { AgentConnection, AgentSetup } from '../../src/services/connections.js';
 import type { ConnectionClient } from '../../src/shared/connections.js';
 import { clientLabels } from '../../src/shared/connection-clients.js';
+import { ExistingWorkSetup } from './ExistingWorkSetup.js';
 
 type Request = <T>(path: string, body?: unknown) => Promise<T>;
 const stateLabels = {
@@ -20,7 +21,7 @@ const docs = {
   other: 'https://modelcontextprotocol.io/docs/develop/connect-local-servers',
 };
 const draftKey = 'work-inbox.connection-setup';
-const testPrompt = 'Use Work Inbox to list my work.';
+const testPrompt = 'Use Rheo to list my work.';
 function date(n: number) {
   return new Date(n).toLocaleString(undefined, {
     month: 'short',
@@ -47,7 +48,10 @@ export function Connections({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [existingWork, setExistingWork] = useState<AgentConnection | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
+  const existingWorkTrigger = useRef<HTMLButtonElement | null>(null);
+  const connectButton = useRef<HTMLButtonElement>(null);
   const key = useRef(crypto.randomUUID());
   useEffect(() => {
     let disposed = false;
@@ -176,10 +180,13 @@ export function Connections({
   async function finishSetup() {
     if (!setup) return;
     await perform(async () => {
-      await request(`/connections/${setup.id}/complete`, {});
+      const completed = await request<AgentConnection>(`/connections/${setup.id}/complete`, {});
+      dialog.current?.close();
       clearDraft();
       setSetup(null);
       setPhase(null);
+      existingWorkTrigger.current = null;
+      if (['codex', 'claude-code'].includes(completed.client)) setExistingWork(completed);
     });
   }
   async function copy(value: string, label: string) {
@@ -213,7 +220,7 @@ export function Connections({
       <article className="settings-card">
         <div className="connection-section-heading">
           <h2>Agent intake</h2>
-          <button className="primary" onClick={() => begin()}>
+          <button ref={connectButton} className="primary" onClick={() => begin()}>
             Connect an agent
           </button>
         </div>
@@ -238,7 +245,7 @@ export function Connections({
                     : row.lastToolAt
                       ? `Last tool call ${date(row.lastToolAt)} · ${row.lastTool}`
                       : row.initializedAt
-                        ? `Client reached Work Inbox ${date(row.initializedAt)}. No tool calls yet.`
+                        ? `Client reached Rheo ${date(row.initializedAt)}. No tool calls yet.`
                         : `Created ${date(row.createdAt)}`}
                 </p>
                 <p className="fine">
@@ -300,6 +307,18 @@ export function Connections({
                       >
                         Disconnect
                       </button>
+                      {row.state === 'verified' &&
+                        ['codex', 'claude-code'].includes(row.client) && (
+                          <button
+                            className="text-button"
+                            onClick={(event) => {
+                              existingWorkTrigger.current = event.currentTarget;
+                              setExistingWork(row);
+                            }}
+                          >
+                            Set up existing work
+                          </button>
+                        )}
                     </>
                   )}
                 </div>
@@ -337,7 +356,7 @@ export function Connections({
               {phase === 'choose'
                 ? 'Choose your agent'
                 : phase === 'configure'
-                  ? 'Add Work Inbox to your agent'
+                  ? 'Add Rheo to your agent'
                   : 'Verify the connection'}
             </h2>
           </div>
@@ -521,8 +540,8 @@ export function Connections({
               </details>
             )}
             <p className="fine">
-              Keep Work Inbox running while your agent connects. Credentials stay in a protected
-              local file.
+              Keep Rheo running while your agent connects. Credentials stay in a protected local
+              file.
             </p>
             <a
               className="reference"
@@ -572,7 +591,7 @@ export function Connections({
               <p>Access revoked. Create a new connection to set up your agent again.</p>
             ) : current?.state === 'verified' ? (
               <p>
-                <Check size={15} /> Your agent successfully used Work Inbox.
+                <Check size={15} /> Your agent successfully used Rheo.
               </p>
             ) : (
               <>
@@ -595,9 +614,9 @@ export function Connections({
               <details className="connection-troubleshooting">
                 <summary>Having trouble?</summary>
                 <p>
-                  Keep Work Inbox running, confirm the setup entry was saved, and reload your
-                  client’s MCP connection. A local check can verify the launcher and credential
-                  without marking your agent verified.
+                  Keep Rheo running, confirm the setup entry was saved, and reload your client’s MCP
+                  connection. A local check can verify the launcher and credential without marking
+                  your agent verified.
                 </p>
                 <button
                   className="secondary"
@@ -647,6 +666,19 @@ export function Connections({
           </>
         )}
       </dialog>
+      {existingWork && (
+        <ExistingWorkSetup
+          connection={existingWork}
+          request={request}
+          onClose={() => {
+            setExistingWork(null);
+            (existingWorkTrigger.current?.isConnected
+              ? existingWorkTrigger.current
+              : connectButton.current
+            )?.focus();
+          }}
+        />
+      )}
     </section>
   );
 }
