@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -18,7 +18,11 @@ beforeEach(async () => {
   vi.stubEnv('RHEO_GITLAB_CONFIG', '');
   dir = mkdtempSync(join(tmpdir(), 'rheo-output-evidence-'));
   store = openStore(':memory:');
-  ctx = await createApp(store, { origin, integrationDir: join(dir, 'integrations') });
+  ctx = await createApp(store, {
+    origin,
+    integrationDir: join(dir, 'integrations'),
+    gitlabKeychain: null,
+  });
   const c = ctx.auth.register('agent', 'Evidence fixture');
   agent = ctx.auth.actor(c.secret, 'bearer');
   headers = { host: '127.0.0.1:4310', authorization: `Bearer ${c.secret}` };
@@ -147,7 +151,7 @@ it('reads only the configured host and keeps observations separate from reports,
     `${gitlab}/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/12`,
     expect.objectContaining({
       method: 'GET',
-      redirect: 'error',
+      redirect: 'manual',
       headers: expect.objectContaining({ 'PRIVATE-TOKEN': token }),
     }),
   );
@@ -257,4 +261,160 @@ it('discards an in-flight check after access removal or agent revocation', async
   );
   expect((await observe(second.work.id, second.report.id)).statusCode).toBe(403);
   expect(store.raw.prepare('SELECT count(*) n FROM output_observations').get()).toEqual({ n: 0 });
+});
+
+it('records standard readiness fields conservatively without treating a pending mergeability check as clear', async () => {
+  await configure();
+  const { work, report } = output();
+  const before = ctx.service.get(agent, work.id).tracking;
+  for (const [state, expected] of [
+    [
+      { detailed_merge_status: 'checking', has_conflicts: false },
+      { mergeStatus: 'checking', hasConflicts: null, discussionsResolved: null },
+    ],
+    [
+      {
+        detailed_merge_status: 'conflict',
+        has_conflicts: true,
+        blocking_discussions_resolved: false,
+        draft: true,
+      },
+      { mergeStatus: 'conflict', hasConflicts: true, discussionsResolved: false, draft: true },
+    ],
+    [
+      {
+        detailed_merge_status: 'mergeable',
+        has_conflicts: false,
+        blocking_discussions_resolved: true,
+      },
+      { mergeStatus: 'mergeable', hasConflicts: false, discussionsResolved: true },
+    ],
+  ] as const) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ web_url: report.url, state: 'opened', sha: commit, ...state }),
+      ),
+    );
+    expect((await observe(work.id, report.id)).json()).toMatchObject({
+      status: 'observed',
+      httpStatus: 200,
+      ...expected,
+    });
+  }
+  expect(ctx.service.get(agent, work.id).tracking).toEqual(before);
+  expect(store.raw.prepare('SELECT count(*) n FROM change_completions').get()).toEqual({ n: 0 });
+});
+
+it('retains actionable safe failure categories without storing provider bodies or exception details', async () => {
+  await configure();
+  const { work, report } = output();
+  for (const [status, code] of [
+    [401, 'authentication'],
+    [403, 'permission'],
+    [404, 'not_found'],
+    [429, 'rate_limited'],
+    [503, 'http'],
+    [302, 'redirect'],
+  ] as const) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(token, { status })),
+    );
+    const result = await observe(work.id, report.id);
+    expect(result.json()).toMatchObject({
+      status: 'unavailable',
+      httpStatus: status,
+      failureCode: code,
+    });
+    expect(result.body).not.toContain(token);
+    expect(result.json().message).not.toBe('GitLab could not be checked.');
+  }
+  for (const [name, code] of [
+    ['TimeoutError', 'timeout'],
+    ['Error', 'network'],
+  ] as const) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const error = new Error(token);
+        error.name = name;
+        throw error;
+      }),
+    );
+    const result = await observe(work.id, report.id);
+    expect(result.json()).toMatchObject({ failureCode: code, httpStatus: null });
+    expect(result.body).not.toContain(token);
+  }
+  expect(
+    JSON.stringify(store.raw.prepare('SELECT * FROM output_observations').all()),
+  ).not.toContain(token);
+});
+
+it('stores new Mac-managed access by Keychain reference and keeps replacement/removal retryable', async () => {
+  await configure();
+  const legacy = JSON.parse(readFileSync(join(dir, 'integrations/gitlab.json'), 'utf8'));
+  await ctx.app.close();
+  const secrets = new Map<string, string>();
+  const keychain = {
+    write: vi.fn(async (id: string, value: string) => {
+      secrets.set(id, value);
+    }),
+    read: vi.fn(async (id: string) => secrets.get(id)!),
+    remove: vi.fn(async (id: string) => {
+      secrets.delete(id);
+    }),
+  };
+  ctx = await createApp(store, {
+    origin,
+    integrationDir: join(dir, 'integrations'),
+    gitlabKeychain: keychain,
+  });
+  await configure();
+  const first = JSON.parse(readFileSync(join(dir, 'integrations/gitlab.json'), 'utf8'));
+  expect(first.keychainId).toBeTruthy();
+  expect(first).not.toHaveProperty('tokenFile');
+  expect(JSON.stringify(first)).not.toContain(token);
+  expect(secrets.get(first.keychainId)).toBe(token);
+  expect(() => readFileSync(legacy.tokenFile)).toThrow();
+  const { work, report } = output();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => response()),
+  );
+  expect((await observe(work.id, report.id)).json().status).toBe('observed');
+  keychain.remove.mockRejectedValueOnce(new Error(token));
+  const failed = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/integrations/gitlab',
+    headers: owner,
+    payload: { origin: gitlab, token: 'new-synthetic-test-token' },
+  });
+  expect(failed.statusCode).toBe(409);
+  expect(failed.body).not.toContain(token);
+  expect(JSON.parse(readFileSync(join(dir, 'integrations/gitlab.json'), 'utf8'))).toEqual(first);
+  expect(secrets.size).toBe(1);
+  await configure();
+  expect(secrets.has(first.keychainId)).toBe(false);
+  expect(secrets.size).toBe(1);
+  await ctx.app.inject({
+    method: 'POST',
+    url: '/api/integrations/gitlab/disconnect',
+    headers: owner,
+    payload: {},
+  });
+  expect(secrets.size).toBe(0);
+  keychain.write.mockRejectedValueOnce(new Error(token));
+  const denied = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/integrations/gitlab',
+    headers: owner,
+    payload: { origin: gitlab, token },
+  });
+  expect(denied.statusCode).toBe(409);
+  expect(denied.body).not.toContain(token);
+  expect(
+    readdirSync(join(dir, 'integrations')).some((name) => name.startsWith('gitlab-token-')),
+  ).toBe(false);
+  expect(() => readFileSync(join(dir, 'integrations/gitlab.json'))).toThrow();
 });

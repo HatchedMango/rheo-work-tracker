@@ -13,7 +13,7 @@
     "revoke": "tsx src/cli/index.ts revoke",
     "demo": "tsx src/cli/index.ts demo",
     "dev": "concurrently -k 'tsx watch src/server/index.ts' 'vite --host 127.0.0.1'",
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.server.json && node scripts/copy-migrations.mjs && vite build",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.server.json && node scripts/copy-migrations.mjs && node scripts/build-keychain.mjs && vite build",
     "start": "NODE_ENV=production node dist/server/index.js",
     "desktop:build": "npm run build && node scripts/package-desktop.mjs",
     "desktop:verify": "node scripts/verify-desktop.mjs",

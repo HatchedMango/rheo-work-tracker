@@ -114,7 +114,7 @@ for (const [path, info] of Object.entries(lock.packages)) {
   cpSync(path, join(payload, path), { recursive: true, dereference: true });
   if (supplemental) cpSync(supplement, join(payload, path), { recursive: true });
 }
-const native = [];
+const native = [join(payload, 'dist/native/rheo-keychain')];
 function trim(path) {
   for (const file of readdirSync(path, { withFileTypes: true })) {
     const item = join(path, file.name);
@@ -240,7 +240,7 @@ writeFileSync(
     .join('\n') + '\n',
 );
 console.log(
-  `Built ${app} with Node ${process.version} and ${native.length} native SQLite addon(s).`,
+  `Built ${app} with Node ${process.version} and ${native.filter((path) => path.endsWith('.node')).length} native SQLite addon(s).`,
 );
 console.log(`Archive: ${archive} (${Math.round(statSync(archive).size / 1024 / 1024)} MB)`);
 console.log(

@@ -340,6 +340,12 @@ export const outputObservations = sqliteTable('output_observations', {
   mrState: text(),
   codeRevision: text(),
   pipelineStatus: text(),
+  mergeStatus: text(),
+  hasConflicts: integer(),
+  discussionsResolved: integer(),
+  draft: integer(),
+  failureCode: text(),
+  httpStatus: integer(),
   message: text().notNull(),
 });
 export const collaborationClaims = sqliteTable('collaboration_claims', {

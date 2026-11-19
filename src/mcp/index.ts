@@ -11,10 +11,14 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { apiClient, readCredential } from '../shared/client.js';
 import { dataDir } from '../config.js';
 import { createSchema, listSchema, updateSchema } from '../shared/contracts.js';
-const request = apiClient(
-  readCredential(process.env.WORK_INBOX_CREDENTIAL_FILE || join(dataDir, 'agent.json')),
-  { diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1' },
+const credential = readCredential(
+  process.env.WORK_INBOX_CREDENTIAL_FILE || join(dataDir, 'agent.json'),
 );
+const request = apiClient(credential, { diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1' });
+const evidenceRequest = apiClient(credential, {
+  timeoutMs: 30000,
+  diagnostic: process.env.WORK_INBOX_SETUP_CHECK === '1',
+});
 const server = new McpServer(
   {
     name: 'work-inbox',
@@ -81,7 +85,7 @@ server.registerTool(
     description: 'Read work context, recent activity, and outcomes.',
     inputSchema: {
       id: z.uuid(),
-      part: z.enum(['detail', 'events', 'outputs']).default('detail'),
+      part: z.enum(['detail', 'events', 'outputs', 'output-evidence']).default('detail'),
       limit: z.number().int().min(1).max(30).default(30),
       offset: z.number().int().min(0).max(100000).default(0),
     },
@@ -90,7 +94,21 @@ server.registerTool(
     result('get_work', () =>
       part === 'detail'
         ? request(`/api/work/${id}`)
-        : request(`/api/work/${id}/${part}?limit=${limit}&offset=${offset}`),
+        : part === 'output-evidence'
+          ? request(`/api/work/${id}/output-evidence`)
+          : request(`/api/work/${id}/${part}?limit=${limit}&offset=${offset}`),
+    ),
+);
+server.registerTool(
+  'check_output',
+  {
+    description:
+      'Read current GitLab evidence for one explicitly linked MR. Uses owner-configured access; never merges, delivers work or changes prerequisite reports. Check at review/delivery milestones when MR evidence matters; unavailable data remains unknown.',
+    inputSchema: { id: z.uuid(), outputId: z.uuid(), revision: z.number().int().positive() },
+  },
+  ({ id, outputId, revision }) =>
+    result('check_output', () =>
+      evidenceRequest(`/api/work/${id}/outputs/${outputId}/observe`, { revision }),
     ),
 );
 server.registerTool(

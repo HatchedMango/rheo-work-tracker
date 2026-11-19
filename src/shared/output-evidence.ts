@@ -10,6 +10,12 @@ export type OutputObservation = {
   mrState: string | null;
   codeRevision: string | null;
   pipelineStatus: string | null;
+  mergeStatus: string | null;
+  hasConflicts: boolean | null;
+  discussionsResolved: boolean | null;
+  draft: boolean | null;
+  failureCode: string | null;
+  httpStatus: number | null;
   message: string;
   applicable: boolean;
 };

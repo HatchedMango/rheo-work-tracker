@@ -26,6 +26,20 @@ import { shellQuote } from '../dist/services/connections.js';
 import { createSchema } from '../dist/shared/contracts.js';
 
 if (process.platform !== 'darwin') throw new Error('Run desktop verification on macOS.');
+const keychainFixture = mkdtempSync(join(tmpdir(), 'rheo-keychain-verify-'));
+try {
+  const helper = join(keychainFixture, 'rheo-keychain');
+  execFileSync(
+    'xcrun',
+    ['swiftc', '-D', 'RHEO_TEST_KEYCHAIN', 'desktop/Keychain.swift', '-o', helper],
+    { stdio: 'pipe' },
+  );
+  execFileSync('/usr/bin/swift', ['desktop/VerifyKeychain.swift', keychainFixture, helper], {
+    stdio: 'inherit',
+  });
+} finally {
+  rmSync(keychainFixture, { recursive: true, force: true });
+}
 // Exercise the exact native navigation validator, including the narrow unsent-draft route.
 const nativeValidator = readFileSync('desktop/InboxWindow.swift', 'utf8').split(
   '// Only the loopback application',
@@ -49,6 +63,7 @@ for rejected in ["codex://settings", "codex://new?prompt=x&path=relative", "code
 console.log('PASS: native existing-chat and unsent-draft allowlist rejects other routes.');
 const app = resolve('release/Rheo.app');
 assert(existsSync(app), 'Build the desktop app first.');
+assert(existsSync(join(app, 'Contents/Resources/app/dist/native/rheo-keychain')));
 for (const name of ['LICENSE', 'NOTICE']) {
   const source = readFileSync(name, 'utf8');
   for (const directory of ['Contents/Resources', 'Contents/Resources/app'])

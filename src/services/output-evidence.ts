@@ -9,12 +9,25 @@ import type { StreamService } from './streams.js';
 import { AppError, ensure } from './errors.js';
 import { dataDir } from '../config.js';
 import { privateDirectory, privateWrite } from '../workflow/outbox.js';
-const configSchema = z.object({ origin: z.url(), tokenFile: z.string().min(1) }).strict();
+import { nativeKeychain, type GitLabKeychain } from './keychain.js';
+const configSchema = z.union([
+  z.object({ origin: z.url(), tokenFile: z.string().min(1) }).strict(),
+  z.object({ origin: z.url(), keychainId: z.uuid() }).strict(),
+]);
+type GitLabConfig = z.infer<typeof configSchema>;
 const sha = z.string().regex(/^[a-f0-9]{40,64}$/i);
 const mrSchema = z.object({
   web_url: z.url(),
   state: z.enum(['opened', 'closed', 'merged', 'locked']),
   sha,
+  detailed_merge_status: z
+    .string()
+    .max(100)
+    .regex(/^[a-z_]+$/)
+    .nullish(),
+  has_conflicts: z.boolean().nullish(),
+  blocking_discussions_resolved: z.boolean().nullish(),
+  draft: z.boolean().nullish(),
   head_pipeline: z
     .object({
       sha: sha.nullable().optional(),
@@ -51,11 +64,49 @@ function protectedText(path: string) {
 function canonical(url: URL) {
   return url.origin + url.pathname.replace(/\/$/, '');
 }
+class CheckFailure extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: number | null,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+function httpFailure(status: number): CheckFailure {
+  const failures: Record<number, [string, string]> = {
+    401: ['authentication', 'GitLab rejected the token (HTTP 401). Update access in Connections.'],
+    403: ['permission', 'GitLab denied access (HTTP 403). Check token scope and project access.'],
+    404: [
+      'not_found',
+      'MR not found or not visible (HTTP 404). Check its URL, whether the project moved, and token access.',
+    ],
+    429: ['rate_limited', 'GitLab rate limited this check (HTTP 429). Wait before retrying.'],
+  };
+  const [code, message] =
+    failures[status] ??
+    (status >= 300 && status < 400
+      ? [
+          'redirect',
+          'GitLab redirected the request. Check the linked MR and configured host; redirects are not followed.',
+        ]
+      : ['http', `GitLab returned HTTP ${status}. Check service availability and retry.`]);
+  return new CheckFailure(code, status, message);
+}
 export class OutputEvidenceService {
+  private configQueue: Promise<unknown> = Promise.resolve();
+  private serializeConfig<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.configQueue.then(operation, operation);
+    this.configQueue = next.catch(() => {});
+    return next;
+  }
   constructor(
     private streams: StreamService,
     private directory = join(dataDir, 'integrations'),
     private fetcher?: typeof fetch,
+    private keychain: GitLabKeychain | null = process.platform === 'darwin'
+      ? nativeKeychain()
+      : null,
   ) {}
   private configPath() {
     return process.env.RHEO_GITLAB_CONFIG || join(this.directory, 'gitlab.json');
@@ -64,12 +115,25 @@ export class OutputEvidenceService {
     this.streams.allow(a);
     try {
       const config = configSchema.parse(JSON.parse(protectedText(this.configPath())));
-      return { configured: true, origin: config.origin, managed: !!process.env.RHEO_GITLAB_CONFIG };
+      return {
+        configured: true,
+        origin: config.origin,
+        managed: !!process.env.RHEO_GITLAB_CONFIG,
+        storage: 'keychainId' in config ? 'keychain' : 'file',
+      };
     } catch {
-      return { configured: false, origin: null, managed: !!process.env.RHEO_GITLAB_CONFIG };
+      return {
+        configured: false,
+        origin: null,
+        managed: !!process.env.RHEO_GITLAB_CONFIG,
+        storage: this.keychain ? 'keychain' : 'file',
+      };
     }
   }
   configure(a: Actor, input: unknown) {
+    return this.serializeConfig(() => this.configureOnce(a, input));
+  }
+  private async configureOnce(a: Actor, input: unknown) {
     ensure(a.scope === 'owner' && a.id === 'owner', 403, 'Only the owner can configure GitLab.');
     ensure(
       !process.env.RHEO_GITLAB_CONFIG,
@@ -90,24 +154,62 @@ export class OutputEvidenceService {
       'Use a GitLab HTTPS origin without paths, credentials or query parameters.',
     );
     const directory = privateDirectory(this.directory);
-    const previous = this.previousToken();
-    const tokenFile = join(directory, 'gitlab-token-' + randomUUID());
-    writeFileSync(tokenFile, p.token, { flag: 'wx', mode: 0o600 });
+    const previous = this.previousConfig();
+    const next: GitLabConfig = this.keychain
+      ? { origin: host.origin, keychainId: randomUUID() }
+      : { origin: host.origin, tokenFile: join(directory, 'gitlab-token-' + randomUUID()) };
+    if ('keychainId' in next) {
+      try {
+        await this.keychain!.write(next.keychainId, p.token);
+      } catch {
+        try {
+          await this.keychain!.remove(next.keychainId);
+        } catch {
+          /* A denied Keychain remains protected. */
+        }
+        throw new AppError(
+          409,
+          'macOS Keychain access is unavailable. Unlock your keychain or check local access policy, then retry.',
+        );
+      }
+    } else writeFileSync(next.tokenFile, p.token, { flag: 'wx', mode: 0o600 });
     try {
-      privateWrite(this.configPath(), { origin: host.origin, tokenFile });
+      privateWrite(this.configPath(), next);
     } catch (error) {
-      rmSync(tokenFile, { force: true });
+      await this.removeSecret(next);
       throw error;
     }
-    this.removeOwnedToken(previous);
+    try {
+      await this.removeSecret(previous);
+    } catch {
+      // Keep the previous reference retryable if Keychain cleanup was denied.
+      if (previous) privateWrite(this.configPath(), previous);
+      else rmSync(this.configPath(), { force: true });
+      try {
+        await this.removeSecret(next);
+      } catch {
+        /* No secret is exposed by cleanup errors. */
+      }
+      throw new AppError(
+        409,
+        'Previous GitLab access could not be removed from Keychain. Check local Keychain access and retry.',
+      );
+    }
     return this.status(a);
   }
-  private previousToken() {
+  private previousConfig() {
     try {
-      return configSchema.parse(JSON.parse(protectedText(this.configPath()))).tokenFile;
+      return configSchema.parse(JSON.parse(protectedText(this.configPath())));
     } catch {
       return null;
     }
+  }
+  private async removeSecret(config: GitLabConfig | null) {
+    if (!config) return;
+    if ('keychainId' in config) {
+      ensure(this.keychain, 409, 'macOS Keychain is unavailable on this platform.');
+      await this.keychain.remove(config.keychainId);
+    } else this.removeOwnedToken(config.tokenFile);
   }
   private removeOwnedToken(path: string | null) {
     if (
@@ -118,15 +220,25 @@ export class OutputEvidenceService {
       rmSync(path, { force: true });
   }
   disconnect(a: Actor) {
+    return this.serializeConfig(() => this.disconnectOnce(a));
+  }
+  private async disconnectOnce(a: Actor) {
     ensure(a.scope === 'owner' && a.id === 'owner', 403, 'Only the owner can configure GitLab.');
     ensure(
       !process.env.RHEO_GITLAB_CONFIG,
       409,
       'GitLab configuration is managed outside the app.',
     );
-    const previous = this.previousToken();
+    const previous = this.previousConfig();
+    try {
+      await this.removeSecret(previous);
+    } catch {
+      throw new AppError(
+        409,
+        'GitLab access could not be removed from Keychain. Check local Keychain access and retry.',
+      );
+    }
     rmSync(this.configPath(), { force: true });
-    this.removeOwnedToken(previous);
     return this.status(a);
   }
   list(a: Actor, workId: string): OutputEvidence {
@@ -148,6 +260,9 @@ export class OutputEvidenceService {
     return row
       ? {
           ...row,
+          hasConflicts: row.hasConflicts === null ? null : !!row.hasConflicts,
+          discussionsResolved: row.discussionsResolved === null ? null : !!row.discussionsResolved,
+          draft: row.draft === null ? null : !!row.draft,
           applicable:
             row.outputRevision === output.revision &&
             (row.status !== 'observed' ||
@@ -211,33 +326,52 @@ export class OutputEvidenceService {
     );
     let token: string;
     try {
-      token = protectedText(config.tokenFile).trim();
+      token = (
+        'keychainId' in config
+          ? ((await this.keychain?.read(config.keychainId)) ?? '')
+          : protectedText(config.tokenFile)
+      ).trim();
     } catch {
       throw new AppError(
         409,
-        'GitLab token file is unavailable or is not private. Update access in Connections.',
+        'GitLab access is unavailable. Unlock your keychain or update access in Connections.',
       );
     }
     ensure(
       token.length >= 10 && token.length <= 2000 && !/\s/.test(token),
       400,
-      'GitLab token file is invalid.',
+      'GitLab access token is unavailable or invalid. Update access in Connections.',
     );
     let result: Pick<
       OutputObservation,
-      'status' | 'mrState' | 'codeRevision' | 'pipelineStatus' | 'message'
+      | 'status'
+      | 'mrState'
+      | 'codeRevision'
+      | 'pipelineStatus'
+      | 'message'
+      | 'mergeStatus'
+      | 'hasConflicts'
+      | 'discussionsResolved'
+      | 'draft'
+      | 'failureCode'
+      | 'httpStatus'
     >;
+    let httpStatus: number | null = null;
     try {
       const response = await (this.fetcher ?? fetch)(
         `${host.origin}/api/v4/projects/${encodeURIComponent(project)}/merge_requests/${match[2]}`,
         {
           method: 'GET',
           headers: { 'PRIVATE-TOKEN': token, Accept: 'application/json' },
-          redirect: 'error',
+          redirect: 'manual',
           signal: AbortSignal.timeout(10000),
         },
       );
-      if (!response.ok) throw new Error('GitLab request failed');
+      httpStatus = response.status;
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw httpFailure(response.status);
+      }
       const reader = response.body!.getReader();
       const chunks: Uint8Array[] = [];
       let size = 0;
@@ -247,7 +381,11 @@ export class OutputEvidenceService {
         size += chunk.value.byteLength;
         if (size > 1_000_000) {
           await reader.cancel();
-          throw new Error('GitLab response too large');
+          throw new CheckFailure(
+            'invalid_response',
+            httpStatus,
+            'GitLab response exceeded the size limit. Check the linked MR in GitLab.',
+          );
         }
         chunks.push(chunk.value);
       }
@@ -262,16 +400,53 @@ export class OutputEvidenceService {
         mrState: mr.state,
         codeRevision: mr.sha,
         pipelineStatus: mr.head_pipeline?.sha === mr.sha ? mr.head_pipeline.status : null,
+        mergeStatus: mr.detailed_merge_status ?? null,
+        // GitLab reports false while mergeability is still being calculated.
+        hasConflicts:
+          mr.detailed_merge_status === 'conflict' || mr.has_conflicts === true
+            ? true
+            : mr.detailed_merge_status === 'mergeable' && mr.has_conflicts === false
+              ? false
+              : null,
+        discussionsResolved: mr.blocking_discussions_resolved ?? null,
+        draft: mr.draft ?? null,
+        failureCode: null,
+        httpStatus,
         message: 'Read from GitLab. This observation does not establish delivery or acceptance.',
       };
-    } catch {
+    } catch (error) {
+      const failure =
+        error instanceof CheckFailure
+          ? error
+          : error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
+            ? new CheckFailure(
+                'timeout',
+                httpStatus,
+                'GitLab check timed out. Check connectivity and retry.',
+              )
+            : httpStatus === null
+              ? new CheckFailure(
+                  'network',
+                  null,
+                  'GitLab could not be reached. Check connectivity, VPN requirements and certificate trust, then retry.',
+                )
+              : new CheckFailure(
+                  'invalid_response',
+                  httpStatus,
+                  'GitLab returned an unexpected response. Check the linked MR in GitLab and retry.',
+                );
       result = {
         status: 'unavailable',
         mrState: null,
         codeRevision: null,
         pipelineStatus: null,
-        message:
-          'GitLab could not be checked. Earlier observations remain historical; the reported work state is unchanged.',
+        mergeStatus: null,
+        hasConflicts: null,
+        discussionsResolved: null,
+        draft: null,
+        failureCode: failure.code,
+        httpStatus: failure.status,
+        message: failure.message,
       };
     }
     // Fence the network response against edits made while the request was in flight.
@@ -284,7 +459,7 @@ export class OutputEvidenceService {
         /* Disconnected or replaced while checking. */
       }
       ensure(
-        currentConfig?.origin === config.origin && currentConfig?.tokenFile === config.tokenFile,
+        JSON.stringify(currentConfig) === JSON.stringify(config),
         409,
         'GitLab access changed during the check; discard this response and check again.',
       );
@@ -311,7 +486,7 @@ export class OutputEvidenceService {
       );
       this.streams.raw
         .prepare(
-          "INSERT INTO output_observations(id,outputId,outputRevision,checkedBy,checkedAt,source,status,mrState,codeRevision,pipelineStatus,message) VALUES (?,?,?,?,?,'gitlab',?,?,?,?,?)",
+          "INSERT INTO output_observations(id,outputId,outputRevision,checkedBy,checkedAt,source,status,mrState,codeRevision,pipelineStatus,message,mergeStatus,hasConflicts,discussionsResolved,draft,failureCode,httpStatus) VALUES (?,?,?,?,?,'gitlab',?,?,?,?,?,?,?,?,?,?,?)",
         )
         .run(
           randomUUID(),
@@ -324,6 +499,12 @@ export class OutputEvidenceService {
           result.codeRevision,
           result.pipelineStatus,
           result.message,
+          result.mergeStatus,
+          result.hasConflicts === null ? null : Number(result.hasConflicts),
+          result.discussionsResolved === null ? null : Number(result.discussionsResolved),
+          result.draft === null ? null : Number(result.draft),
+          result.failureCode,
+          result.httpStatus,
         );
     });
     return this.latest(output)!;

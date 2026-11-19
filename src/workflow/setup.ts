@@ -28,6 +28,7 @@ export const bindingSchema = z.object({
   files: z.array(z.object({ path: z.string(), hash: z.string() })),
   blockHash: z.string(),
   scope: z.enum(['personal', 'project']).optional(),
+  stopPolicy: z.enum(['checkpoint-once', 'observe']).optional(),
   hook: z.unknown().optional(),
   hooks: z.array(z.object({ event: z.string(), entry: z.unknown() })).optional(),
 });
@@ -42,6 +43,7 @@ export type SetupOptions = {
   streamId?: string;
   changeId?: string;
   scope?: 'personal' | 'project';
+  stopPolicy?: 'checkpoint-once' | 'observe';
 };
 const markers = (client: string) => ({
   start: `<!-- work-inbox:${client}:start -->`,
@@ -224,6 +226,7 @@ export function workflowSetup(
   // Existing installs retain their loading strategy until explicitly migrated.
   const scope = o.scope ?? (old ? (old.scope ?? 'project') : 'personal');
   const projectInstructions = scope === 'project';
+  const stopPolicy = o.stopPolicy ?? old?.stopPolicy ?? 'checkpoint-once';
   const docPath = safePath(project, instructionFile(o.client)),
     doc = read(docPath),
     current = section(doc, o.client),
@@ -279,6 +282,7 @@ export function workflowSetup(
     old.version !== WORKFLOW_VERSION ||
     (projectInstructions ? current?.body !== desired : !!current) ||
     (old.scope ?? 'project') !== scope ||
+    (old.stopPolicy ?? 'checkpoint-once') !== stopPolicy ||
     (exclusions !== null && !exclusions.current) ||
     files.some((f) => read(safePath(project, f.path)) !== f.content) ||
     old.credentialFile !== o.credentialFile ||
@@ -291,6 +295,7 @@ export function workflowSetup(
   const report = {
     version: WORKFLOW_VERSION,
     scope,
+    stopPolicy,
     project,
     client: o.client,
     installed: !!old,
@@ -357,6 +362,7 @@ export function workflowSetup(
     files: files.map((f) => ({ path: f.path, hash: hash(f.content) })),
     blockHash: hash(desired),
     scope,
+    stopPolicy,
     hooks: desiredHooks,
   };
   // The manifest contains paths/selection only. Credential bytes never enter project files.

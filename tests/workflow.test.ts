@@ -144,6 +144,7 @@ it('merges Claude local hooks and preserves later unrelated settings on update/r
   expect(settings.hooks.SessionStart).toHaveLength(2);
   expect(settings.hooks.Stop).toHaveLength(2);
   expect(settings.hooks.UserPromptSubmit).toHaveLength(1);
+  expect(settings.hooks.PostCompact).toBeUndefined();
   expect(settings.permissions).toEqual(existing.permissions);
   settings.model = 'human choice';
   writeFileSync(path, JSON.stringify(settings));

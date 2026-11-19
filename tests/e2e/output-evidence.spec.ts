@@ -41,9 +41,9 @@ test('read-only MR checks remain distinct from reported work and work on a narro
     idempotencyKey: randomUUID(),
   });
   await post(`/work/${other.id}/outputs`, {
-    kind: 'other',
+    kind: 'mr',
     label: 'Other change evidence',
-    url: 'https://example.com/other',
+    url: 'https://gitlab.example.com/team/project/-/merge_requests/13',
     state: 'available',
     idempotencyKey: randomUUID(),
   });
@@ -64,8 +64,12 @@ test('read-only MR checks remain distinct from reported work and work on a narro
     const inspector = page.getByRole('complementary', { name: 'Selected work' });
     await expect(inspector.getByText('available · reported by', { exact: false })).toBeVisible();
     await inspector.getByRole('button', { name: 'Check GitLab', exact: true }).click();
-    await expect(inspector.getByText('GitLab: merged', { exact: false })).toBeVisible();
+    await expect(inspector.getByText('GitLab: opened', { exact: false })).toBeVisible();
     await expect(inspector.getByText('pipeline success', { exact: false })).toBeVisible();
+    await expect(inspector.getByText('Conflicts detected', { exact: false })).toBeVisible();
+    await expect(
+      inspector.getByText('Unresolved blocking discussions', { exact: false }),
+    ).toBeVisible();
     await expect(page.locator(`[data-map-node="${w.id}"]`)).toContainText('Planned');
     const actual = await page.request.get(`/api/work/${w.id}`);
     expect((await actual.json()).tracking.progress).not.toBe('delivered');
@@ -90,8 +94,13 @@ test('read-only MR checks remain distinct from reported work and work on a narro
     await expect(inspector.getByRole('link', { name: 'Implementation MR' })).toHaveCount(0);
     await expect(inspector.getByRole('link', { name: 'Other change evidence' })).toBeVisible();
     await page.unroute(observePath);
+    await inspector.getByRole('button', { name: 'Check GitLab', exact: true }).click();
+    await expect(
+      inspector.getByText('GitLab rejected the token (HTTP 401).', { exact: false }),
+    ).toBeVisible();
+    await expect(page.locator(`[data-map-node="${other.id}"]`)).toContainText('Planned');
     await page.locator(`[data-map-node="${w.id}"]`).click();
-    await expect(inspector.getByText('GitLab: merged', { exact: false })).toBeVisible();
+    await expect(inspector.getByText('GitLab: opened', { exact: false })).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,

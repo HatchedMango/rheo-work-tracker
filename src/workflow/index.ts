@@ -5,7 +5,14 @@ import { z } from 'zod';
 import { apiClient, readCredential } from '../shared/client.js';
 import { bindingSchema, workflowSetup } from './setup.js';
 import { WORKFLOW_VERSION } from '../shared/streams.js';
-import { runHook, saveCheckpoint, checkpointFile, selectWork, setStopPolicy } from './hooks.js';
+import {
+  runHook,
+  saveCheckpoint,
+  checkpointFile,
+  selectWork,
+  setStopPolicy,
+  setProjectStopPolicy,
+} from './hooks.js';
 import { SyncOutbox } from './outbox.js';
 import { reviewWork, beginWork, updateWorkLease, outputEvidence } from './operations.js';
 export async function runWorkflow(argv: string[]) {
@@ -88,11 +95,17 @@ export async function runWorkflow(argv: string[]) {
     const f = z
       .object({
         binding: z.string().min(1),
-        'session-id': z.string().min(1).max(200),
+        'session-id': z.string().min(1).max(200).optional(),
+        scope: z.enum(['session', 'project']).default('session'),
         'stop-policy': z.enum(['checkpoint-once', 'observe']),
       })
       .strict()
       .parse(flags);
+    if (f.scope === 'project') {
+      if (f['session-id']) throw new Error('Project mode does not take a session ID.');
+      return JSON.stringify(setProjectStopPolicy(f.binding, f['stop-policy']));
+    }
+    if (!f['session-id']) throw new Error('Session mode requires --session-id.');
     return JSON.stringify(await setStopPolicy(f.binding, f['session-id'], f['stop-policy']));
   }
   if (command === 'select') {
@@ -171,6 +184,7 @@ export async function runWorkflow(argv: string[]) {
       'stream-id': z.uuid().optional(),
       'change-id': z.uuid().optional(),
       scope: z.enum(['personal', 'project']).optional(),
+      'stop-policy': z.enum(['checkpoint-once', 'observe']).optional(),
     })
     .strict()
     .parse(flags);
@@ -185,6 +199,7 @@ export async function runWorkflow(argv: string[]) {
       streamId: f['stream-id'],
       changeId: f['change-id'],
       scope: f.scope,
+      stopPolicy: f['stop-policy'],
     }),
     null,
     2,

@@ -30,14 +30,24 @@ type Inventory = {
   items: { id: string; kind: string; title: string; detail: string }[];
   nextOffset: number | null;
 };
-function connection(bindingPath: string, sessionId: string, requireChange = true) {
+function connection(
+  bindingPath: string,
+  sessionId: string,
+  requireChange = true,
+  timeoutMs = 10000,
+) {
   const binding = bindingSchema.parse(JSON.parse(readFileSync(bindingPath, 'utf8')));
   if (binding.version !== WORKFLOW_VERSION) throw new Error('Update the installed workflow first.');
   const outbox = new SyncOutbox(binding.credentialFile, binding.project, binding.client);
   const selected = readSession(outbox, sessionId).selected ?? binding;
   if (requireChange && !selected.changeId)
     throw new Error('Explicitly select a change before reviewing or beginning work.');
-  return { binding, outbox, selected, request: apiClient(readCredential(binding.credentialFile)) };
+  return {
+    binding,
+    outbox,
+    selected,
+    request: apiClient(readCredential(binding.credentialFile), { timeoutMs }),
+  };
 }
 
 // The helper fetches and stores records; the agent must actually read them and
@@ -264,7 +274,7 @@ async function updateLeaseOnce(bindingPath: string, sessionId: string, release: 
   return result;
 }
 export async function outputEvidence(bindingPath: string, sessionId: string, outputId?: string) {
-  const { selected, request } = connection(bindingPath, sessionId);
+  const { selected, request } = connection(bindingPath, sessionId, true, 30000);
   const evidence = await request<import('../shared/output-evidence.js').OutputEvidence>(
     `/api/work/${selected.changeId}/output-evidence`,
   );

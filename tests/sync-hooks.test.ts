@@ -438,3 +438,95 @@ it('coordinates independent helper processes without losing the same session sta
     f.store.close();
   }
 });
+
+it('keeps unselected prompts and stop hooks quiet while recovering selection guidance at startup and compaction', async () => {
+  const f = await fixture('claude-code');
+  try {
+    const binding = JSON.parse(readFileSync(f.binding, 'utf8'));
+    delete binding.streamId;
+    writeFileSync(f.binding, JSON.stringify(binding));
+    const session = { session_id: 'untracked-monorepo-chat' };
+    for (const hook_event_name of ['UserPromptSubmit', 'Stop', 'Interrupt', 'PostCompact']) {
+      expect(await runHook(f.binding, { ...session, hook_event_name })).toEqual({});
+    }
+    for (const source of ['startup', 'resume', 'compact']) {
+      const result = await runHook(f.binding, {
+        ...session,
+        hook_event_name: 'SessionStart',
+        source,
+      });
+      expect(result.hookSpecificOutput?.additionalContext).toContain(
+        'No stream or change is selected',
+      );
+      expect(result).not.toHaveProperty('decision');
+    }
+    const outbox = new SyncOutbox(f.credentialFile, f.dir, 'claude-code');
+    expect(outbox.pending()).toEqual([]);
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    await selectWork(f.binding, session.session_id, { streamId: f.stream.id });
+    expect(
+      (await runHook(f.binding, { ...session, hook_event_name: 'UserPromptSubmit' }))
+        .hookSpecificOutput?.additionalContext,
+    ).toContain(f.stream.title);
+    expect(await runHook(f.binding, { ...session, hook_event_name: 'PostCompact' })).toEqual({});
+    expect(readSession(outbox, session.session_id).fullContextLoaded).toBe(false);
+    const recovered = await runHook(f.binding, {
+      ...session,
+      hook_event_name: 'SessionStart',
+      source: 'compact',
+    });
+    expect(recovered.hookSpecificOutput?.additionalContext).toContain('Use the work-inbox skill');
+    expect(readSession(outbox, session.session_id).fullContextLoaded).toBe(true);
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+it('persists project checkpoint preferences across sessions and setup while honoring session overrides', async () => {
+  const f = await fixture();
+  try {
+    const { runWorkflow } = await import('../src/workflow/index.js');
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    await runWorkflow([
+      'mode',
+      '--binding',
+      f.binding,
+      '--scope',
+      'project',
+      '--stop-policy',
+      'observe',
+    ]);
+    workflowSetup('install', {
+      project: f.dir,
+      client: 'codex',
+      credentialFile: f.credentialFile,
+      helper: join(f.dir, 'helper'),
+      serverName: 'fixture',
+      streamId: f.stream.id,
+    });
+    expect(JSON.parse(readFileSync(f.binding, 'utf8')).stopPolicy).toBe('observe');
+    for (const session_id of ['fresh-a', 'fresh-b']) {
+      await runHook(f.binding, { session_id, hook_event_name: 'SessionStart' });
+      const stop = await runHook(f.binding, { session_id, hook_event_name: 'Stop' });
+      expect(stop).not.toHaveProperty('decision');
+      expect(stop).toHaveProperty('systemMessage', expect.stringContaining('unsynchronized'));
+    }
+    await setStopPolicy(f.binding, 'session-override', 'checkpoint-once');
+    await runHook(f.binding, { session_id: 'session-override', hook_event_name: 'SessionStart' });
+    expect(
+      await runHook(f.binding, { session_id: 'session-override', hook_event_name: 'Stop' }),
+    ).toHaveProperty('decision', 'block');
+    expect(
+      f.sync
+        .list({ id: 'owner', scope: 'owner', ownerId: 'owner' })
+        .items.every((s: { needsCheckpoint: number }) => s.needsCheckpoint === 1),
+    ).toBe(true);
+    await expect(
+      runWorkflow(['mode', '--binding', f.binding, '--stop-policy', 'observe']),
+    ).rejects.toThrow('session-id');
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});

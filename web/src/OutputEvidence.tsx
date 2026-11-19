@@ -91,6 +91,28 @@ function SelectedOutputEvidence({ workId, request }: { workId: string; request: 
                 {observed.codeRevision && (
                   <code title={observed.codeRevision}>{observed.codeRevision.slice(0, 12)}</code>
                 )}
+                {observed.status === 'observed' ? (
+                  <small className="mr-readiness">
+                    {observed.mergeStatus
+                      ? `Merge status: ${observed.mergeStatus.replaceAll('_', ' ')}`
+                      : 'Merge status unavailable'}
+                    {' · '}
+                    {observed.hasConflicts === true
+                      ? 'Conflicts detected'
+                      : observed.hasConflicts === false
+                        ? 'No conflicts reported'
+                        : 'Conflicts not confirmed'}
+                    {' · '}
+                    {observed.discussionsResolved === true
+                      ? 'Blocking discussions resolved'
+                      : observed.discussionsResolved === false
+                        ? 'Unresolved blocking discussions'
+                        : 'Discussion status unavailable'}
+                    {observed.draft === true ? ' · Draft' : ''}
+                  </small>
+                ) : (
+                  <small>{observed.message}</small>
+                )}
               </p>
             )}
             {output.kind === 'mr' && (
@@ -122,7 +144,12 @@ function SelectedOutputEvidence({ workId, request }: { workId: string; request: 
   );
 }
 
-type GitLabStatus = { configured: boolean; origin: string | null; managed: boolean };
+type GitLabStatus = {
+  configured: boolean;
+  origin: string | null;
+  managed: boolean;
+  storage: 'keychain' | 'file';
+};
 export function GitLabConnection({ request }: { request: SessionRequest }) {
   const [status, setStatus] = useState<GitLabStatus | null>(null);
   const [editing, setEditing] = useState(false);
@@ -178,6 +205,13 @@ export function GitLabConnection({ request }: { request: SessionRequest }) {
       {status?.configured && (
         <p>Access saved for {status.origin}. An MR check verifies whether the access works.</p>
       )}
+      {status && (
+        <p className="muted">
+          {status.storage === 'keychain'
+            ? 'Tokens are stored in macOS Keychain.'
+            : 'Tokens use protected local files on this installation.'}
+        </p>
+      )}
       {status?.managed ? (
         <p className="muted">Access is managed outside Rheo on this Mac.</p>
       ) : !editing ? (
@@ -222,8 +256,8 @@ export function GitLabConnection({ request }: { request: SessionRequest }) {
             />
           </label>
           <p className="muted">
-            Use read_api access, preferably scoped to the project. The token stays in protected
-            local storage on this Mac.
+            Use read_api access, preferably scoped to the project. The token stays in{' '}
+            {status?.storage === 'keychain' ? 'macOS Keychain' : 'protected local storage'}.
           </p>
           <div className="button-row">
             <button className="primary" disabled={busy}>

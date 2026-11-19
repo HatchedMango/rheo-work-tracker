@@ -1,5 +1,6 @@
 import { WorkChatService } from '../services/work-chat.js';
 import { OutputEvidenceService } from '../services/output-evidence.js';
+import type { GitLabKeychain } from '../services/keychain.js';
 import { observeOutputSchema } from '../shared/output-evidence.js';
 import { DailyProgressService } from '../services/daily-progress.js';
 import { dailyProgressQuerySchema } from '../shared/daily-progress.js';
@@ -50,6 +51,7 @@ export async function createApp(
     mcpLauncher?: string;
     integrationDir?: string;
     gitlabFetch?: typeof fetch;
+    gitlabKeychain?: GitLabKeychain | null;
   },
 ) {
   const app = Fastify({
@@ -77,6 +79,7 @@ export async function createApp(
     streams,
     options.integrationDir,
     options.gitlabFetch,
+    options.gitlabKeychain,
   );
   const connections = new ConnectionService(store, {
     origin: options.origin,

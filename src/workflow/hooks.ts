@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { bindingSchema, instructionBlock } from './setup.js';
 import { WORKFLOW_VERSION, humanFacingReminder, workflowCapabilities } from '../shared/streams.js';
-import { SyncOutbox } from './outbox.js';
+import { SyncOutbox, privateWrite } from './outbox.js';
 import { readSession, withSession, eventTime, type StopPolicy } from './session-state.js';
 import type { z } from 'zod';
 import { syncEventSchema } from '../shared/sync.js';
@@ -33,7 +33,11 @@ export async function runHook(bindingPath: string, input: HookInput) {
     const sessionId = input.session_id;
     const local = await withSession(outbox, sessionId, (state) => {
       const selected = state.selected ?? { streamId: binding.streamId, changeId: binding.changeId };
-      if (!selected.streamId && !selected.changeId) throw new Error('Explicit selection required.');
+      if (!selected.streamId && !selected.changeId) {
+        if (kind === 'start' || (kind === 'compact' && input.hook_event_name === 'SessionStart'))
+          throw new Error('Explicit selection required.');
+        return { unselected: true } as const;
+      }
       const stale =
         !!state.turnId &&
         !!input.turn_id &&
@@ -58,6 +62,7 @@ export async function runHook(bindingPath: string, input: HookInput) {
       });
       return { selected, turnId, queued, stale, compact };
     });
+    if ('unselected' in local) return {};
     if (!local.queued)
       return {
         systemMessage:
@@ -87,6 +92,14 @@ export async function runHook(bindingPath: string, input: HookInput) {
       return {
         systemMessage: `Rheo update ${rejected ? 'needs reconciliation' : 'is queued locally'}. Do not claim synchronization succeeded. Retry with the workflow helper; do not infer completion or approval.`,
       };
+    // PostCompact has no additionalContext contract. SessionStart(source=compact)
+    // delivers recovered context; a manually configured PostCompact only invalidates it.
+    if (input.hook_event_name === 'PostCompact') {
+      await withSession(outbox, sessionId, (state) => {
+        if (state.turnId === turnId) state.fullContextLoaded = false;
+      });
+      return {};
+    }
     if (latest.context && !local.compact)
       await withSession(outbox, sessionId, (state) => {
         if (state.turnId === turnId) state.fullContextLoaded = true;
@@ -107,7 +120,11 @@ export async function runHook(bindingPath: string, input: HookInput) {
           delete state.reminder;
         if (input.stop_hook_active && !state.reminder)
           state.reminder = { turnId, checkpointAt: latest.session.lastCheckpointAt };
-        if (state.stopPolicy === 'observe' || input.stop_hook_active || state.reminder)
+        if (
+          (state.stopPolicy ?? binding.stopPolicy) === 'observe' ||
+          input.stop_hook_active ||
+          state.reminder
+        )
           return false;
         state.reminder = { turnId, checkpointAt: latest.session.lastCheckpointAt };
         return true;
@@ -141,9 +158,7 @@ export async function runHook(bindingPath: string, input: HookInput) {
       return {
         systemMessage:
           'Rheo has no selected stream or change. Ask for selection; do not infer one.',
-        ...(['SessionStart', 'UserPromptSubmit', 'PostCompact'].includes(
-          input.hook_event_name ?? '',
-        )
+        ...(input.hook_event_name === 'SessionStart'
           ? {
               hookSpecificOutput: {
                 hookEventName: input.hook_event_name,
@@ -224,4 +239,10 @@ export async function setStopPolicy(
     state.stopPolicy = stopPolicy;
   });
   return { sessionId, stopPolicy, continuationOwnedBy: 'client-or-runner' };
+}
+
+export function setProjectStopPolicy(bindingPath: string, stopPolicy: StopPolicy) {
+  const binding = bindingSchema.parse(JSON.parse(readFileSync(bindingPath, 'utf8')));
+  privateWrite(bindingPath, { ...binding, stopPolicy });
+  return { scope: 'project', stopPolicy, continuationOwnedBy: 'client-or-runner' };
 }

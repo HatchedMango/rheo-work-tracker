@@ -7,14 +7,18 @@ import { openStore } from '../src/db/index.js';
 import { createApp } from '../src/server/app.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-it('round trips all four tools over real stdio and HTTP with a scoped agent credential', async () => {
+it('round trips the work tools over real stdio and HTTP with a scoped agent credential', async () => {
   const reservation = createServer();
   await new Promise<void>((r) => reservation.listen(0, '127.0.0.1', r));
   const port = (reservation.address() as { port: number }).port;
   await new Promise<void>((r) => reservation.close(() => r()));
   const dir = mkdtempSync(join(tmpdir(), 'work-inbox-mcp-'));
   const store = openStore(':memory:');
-  const { app, auth, service } = await createApp(store, { origin: `http://127.0.0.1:${port}` });
+  const { app, auth, service } = await createApp(store, {
+    origin: `http://127.0.0.1:${port}`,
+    integrationDir: join(dir, 'integrations'),
+    gitlabKeychain: null,
+  });
   const c = auth.register('agent', 'MCP follow-up');
   const path = join(dir, 'agent.json');
   writeFileSync(path, JSON.stringify({ url: `http://127.0.0.1:${port}`, token: c.secret }), {
@@ -53,6 +57,7 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
         'claim_change',
         'review_dependencies',
         'assess_dependencies',
+        'check_output',
       ]),
     );
     expect(tools.find((t) => t.name === 'create_work')?.inputSchema.properties).not.toHaveProperty(
@@ -107,6 +112,19 @@ it('round trips all four tools over real stdio and HTTP with a scoped agent cred
     expect(item.events[0].message).toContain('Discovered');
     expect(item.events[0].actorName).toBe('MCP follow-up');
     expect(service.status({ id: 'owner', scope: 'owner', ownerId: 'owner' }).inboxCount).toBe(0);
+    const evidence = read(
+      await client.callTool({ name: 'get_work', arguments: { id: w.id, part: 'output-evidence' } }),
+    );
+    expect(evidence).toMatchObject({ configured: false, outputs: [] });
+    const invalidCheck = await client.callTool({
+      name: 'check_output',
+      arguments: { id: w.id, outputId: crypto.randomUUID(), revision: 1 },
+    });
+    expect(invalidCheck.isError).toBe(true);
+    expect(
+      read(await client.callTool({ name: 'get_work', arguments: { id: w.id } })).tracking.progress,
+    ).toBe(item.tracking.progress);
+
     const call = async (name: string, args: Record<string, unknown>) => {
       const r = await client.callTool({ name, arguments: args });
       expect(r.isError).not.toBe(true);

@@ -12,14 +12,20 @@ const { app, auth, service } = await createApp(store, {
   allowSimulation: true,
   publicDir: resolve('dist/public'),
   integrationDir: join(dir, 'integrations'),
+  gitlabKeychain: null,
   gitlabFetch: async (input) => {
     const url = new URL(String(input));
     if (url.origin !== 'https://gitlab.example.com') throw new Error('Unexpected fixture host');
+    if (url.pathname.endsWith('/merge_requests/13')) return new Response('', { status: 401 });
     return Response.json({
       web_url: 'https://gitlab.example.com/team/project/-/merge_requests/12',
-      state: 'merged',
+      state: 'opened',
       sha: 'a'.repeat(40),
       head_pipeline: { sha: 'a'.repeat(40), status: 'success' },
+      detailed_merge_status: 'conflict',
+      has_conflicts: true,
+      blocking_discussions_resolved: false,
+      draft: false,
     });
   },
 });
