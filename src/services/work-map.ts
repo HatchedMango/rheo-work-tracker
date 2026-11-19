@@ -150,7 +150,12 @@ export function readWorkMap(streams: StreamService, actor: Actor, rootId: string
             prerequisiteCount: m.prerequisites.length,
             reference,
             conversationUrl: null,
-            outputs: m.outputs.slice(0, 2).map((o) => ({ label: short(o.label, 180), url: o.url })),
+            outputs: m.outputs.slice(0, 2).map((o) => ({
+              label: short(o.label, 180),
+              url: o.url,
+              id: o.id,
+              revision: o.revision,
+            })),
           };
         } else if (kind === 'question') {
           const q = streams.entry(actor, id) as ContextEntry;

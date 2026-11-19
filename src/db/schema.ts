@@ -325,6 +325,23 @@ export const changeOutputs = sqliteTable('change_outputs', {
   reportedAt: integer().notNull(),
   revision: integer().notNull(),
 });
+export const outputObservations = sqliteTable('output_observations', {
+  id: text().primaryKey(),
+  outputId: text()
+    .notNull()
+    .references(() => changeOutputs.id, { onDelete: 'cascade' }),
+  outputRevision: integer().notNull(),
+  checkedBy: text()
+    .notNull()
+    .references(() => actors.id),
+  checkedAt: integer().notNull(),
+  source: text().notNull(),
+  status: text().notNull(),
+  mrState: text(),
+  codeRevision: text(),
+  pipelineStatus: text(),
+  message: text().notNull(),
+});
 export const collaborationClaims = sqliteTable('collaboration_claims', {
   id: text().primaryKey(),
   workId: text()

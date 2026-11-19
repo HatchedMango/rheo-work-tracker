@@ -1,8 +1,10 @@
 import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { StatusBadge } from './UI.js';
-import { ChevronRight, ArrowUpRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import type { Detail } from '../../src/db/schema.js';
 import { WorkContent, BriefContent } from './WorkContent.js';
+import { OutputEvidenceView } from './OutputEvidence.js';
+import type { SessionRequest } from './Sessions.js';
 const date = (n: number) =>
   new Date(n).toLocaleString(undefined, {
     month: 'short',
@@ -14,10 +16,12 @@ export function ChangeTrackingView({
   work,
   onStream,
   onChange,
+  request,
 }: {
   work: Detail;
   onStream: (id: string) => void;
   onChange: (id: string) => void;
+  request: SessionRequest;
 }) {
   const m = work.tracking;
   return (
@@ -63,21 +67,11 @@ export function ChangeTrackingView({
           <h3>
             Outputs <span className="subtle-count">{m.outputs.length}</span>
           </h3>
-          {m.outputs.map((o) => (
-            <article className="output" key={o.id}>
-              <a href={o.url} target="_blank" rel="noopener noreferrer">
-                {o.label}
-                <ArrowUpRight size={14} />
-              </a>
-              <details className="output-evidence">
-                <summary>Evidence</summary>
-                <small>
-                  {o.kind} · {o.state} reported by {o.actorName} · {date(o.reportedAt)}
-                </small>
-                {o.codeRevision && <code>{o.codeRevision}</code>}
-              </details>
-            </article>
-          ))}
+          <OutputEvidenceView
+            workId={work.id}
+            version={m.outputs.map((o) => `${o.id}:${o.revision}`).join(',')}
+            request={request}
+          />
         </section>
       )}
       {(m.expectedOutput ||

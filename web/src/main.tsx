@@ -724,6 +724,7 @@ function App() {
                       )}
                       <ChangeTrackingView
                         work={detail}
+                        request={api}
                         onStream={(id) => navigate('active', null, 'any', id)}
                         onChange={(id) => navigate(route.view, id)}
                       />

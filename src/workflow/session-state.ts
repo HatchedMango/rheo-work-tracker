@@ -11,6 +11,15 @@ export type SessionState = {
   stopPolicy?: StopPolicy;
   fullContextLoaded?: boolean;
   reminder?: { turnId: string; checkpointAt: number | null };
+  begin?: {
+    reviewId: string;
+    inputHash: string;
+    reportId: string;
+    sessionId: string;
+    token: string;
+    changeId: string;
+    claimId?: string;
+  };
 };
 // Separate private files prevent unrelated chats from overwriting each other.
 export function sessionPath(outbox: SyncOutbox, sessionId: string) {
@@ -31,7 +40,7 @@ export function readSession(outbox: SyncOutbox, sessionId: string): SessionState
 export async function withSession<T>(
   outbox: SyncOutbox,
   sessionId: string,
-  operation: (state: SessionState) => T,
+  operation: (state: SessionState) => T | Promise<T>,
 ): Promise<T> {
   const path = sessionPath(outbox, sessionId),
     lock = path + '.lock',
@@ -73,7 +82,7 @@ export async function withSession<T>(
   }
   try {
     const state = readSession(outbox, sessionId);
-    const result = operation(state);
+    const result = await operation(state);
     privateWrite(path, state);
     return result;
   } finally {

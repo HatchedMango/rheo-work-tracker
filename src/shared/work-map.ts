@@ -17,7 +17,7 @@ export type MapNode = {
   reference: boolean;
   conversationUrl: string | null;
   sessions?: import('./sessions.js').SessionLinks;
-  outputs: { label: string; url: string }[];
+  outputs: { label: string; url: string; id?: string; revision?: number }[];
 };
 export type MapEdge = Omit<FlowEdge, 'source' | 'title'> & {
   sourceId: string;

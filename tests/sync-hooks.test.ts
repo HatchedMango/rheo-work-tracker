@@ -78,6 +78,9 @@ it('recovers offline lifecycle writes and checks for a real checkpoint, with a s
     await f.app.listen({ port: f.port, host: '127.0.0.1' });
     const started = await runHook(f.binding, { ...input, source: 'resume' });
     expect(started).toHaveProperty('hookSpecificOutput');
+    expect(started.hookSpecificOutput?.additionalContext).toContain('Use the work-inbox skill');
+    expect(started.hookSpecificOutput?.additionalContext).toContain('get_stream_context');
+    expect(() => readFileSync(join(f.dir, 'AGENTS.md'))).toThrow();
     expect(outbox.pending()).toHaveLength(0);
     await runHook(f.binding, {
       hook_event_name: 'UserPromptSubmit',

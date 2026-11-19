@@ -6,6 +6,7 @@ import type { AgentConnection, AgentSetup } from '../../src/services/connections
 import type { ConnectionClient } from '../../src/shared/connections.js';
 import { clientLabels } from '../../src/shared/connection-clients.js';
 import { ExistingWorkSetup } from './ExistingWorkSetup.js';
+import { GitLabConnection } from './OutputEvidence.js';
 
 type Request = <T>(path: string, body?: unknown) => Promise<T>;
 const stateLabels = {
@@ -327,6 +328,7 @@ export function Connections({
           </ul>
         )}
       </article>
+      <GitLabConnection request={request} />
       <article className="settings-card">
         <h2>Execution worker</h2>
         <p>
@@ -524,9 +526,8 @@ export function Connections({
               <details className="manual-config">
                 <summary>Project workflow</summary>
                 <p>
-                  Give this prompt to your agent to add project guidance
-                  {setup.client === 'claude-code' ? ' and a startup context hook' : ''}. MCP
-                  connectivity alone does not install it.
+                  Give this prompt to your agent to set up local workflow guidance and context
+                  hooks. MCP connectivity alone does not install it.
                 </p>
                 <button
                   className="text-button"

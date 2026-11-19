@@ -1,6 +1,6 @@
 # Workflow synchronization
 
-Introduced in 0.3.2 / workflow 1.3.0: structured checkpoints and local lifecycle adapters. Current 0.8.0 / workflow 1.6.0 adds cooperative loop guidance and lifecycle behavior to explicit dependency reports; question/action feedback remains the active flow, while legacy decision relays remain for compatibility. This implements the synchronization portion of the planning-and-decisions proposal. Explicit staged assessments use `review_dependencies` and `assess_dependencies`; ordinary progress checkpoints and older boolean assessments do not certify that contract. Immutable human-readable plan versions and the broader request/navigation redesign remain separate work.
+Introduced in 0.3.2 / workflow 1.3.0: structured checkpoints and local lifecycle adapters. Workflow 1.6.0 adds cooperative loop guidance and lifecycle behavior to explicit dependency reports; question/action feedback remains the active flow, while legacy decision relays remain for compatibility. This implements the synchronization portion of the planning-and-decisions proposal. Explicit staged assessments use `review_dependencies` and `assess_dependencies`; ordinary progress checkpoints and older boolean assessments do not certify that contract. Immutable human-readable plan versions and the broader request/navigation redesign remain separate work.
 
 ## What synchronizes
 
@@ -71,8 +71,25 @@ work-inbox-workflow checkpoint --binding /PROJECT/.work-inbox/codex.json --input
 
 For source use, replace `work-inbox-workflow` with `node dist/workflow/index.js`. A minimal input is `{"summary":"Approach reviewed; implementation has not started."}`. A progress update also needs `change: {revision, progress, note}` for the selected change. Never reuse a human work revision for its tracking revision. Check `recorded`, `pending` and `conflicts` in the result; queued or rejected is not synchronized.
 
+## Optional convenience operations (workflow 1.7)
+
+The helper offers the same dependency assessment and claim service contracts with less mechanical bookkeeping. Existing MCP tools remain supported. Use an explicitly selected change and the actual native session ID; never infer either from a project directory.
+
+```sh
+work-inbox-workflow review --binding BINDING --session-id SESSION
+work-inbox-workflow begin --binding BINDING --session-id SESSION --input /PRIVATE/begin.json
+work-inbox-workflow lease --binding BINDING --session-id SESSION --action renew
+work-inbox-workflow lease --binding BINDING --session-id SESSION --action release
+```
+
+`review` returns a receipt ID and private `reviewFile` with the full records fetched across all returned pages. Read them before beginning. An optional `--scope-stream-id` chooses an explicit ancestor scope. Oversized, incomplete or changing inventories are refused; fetching records creates no assessment or claim.
+
+The begin input contains that `reviewId`, the actual `reviewedIds`, `coverage`, and explicit `start`/`deliver` result-and-reason objects in the existing assessment format. The helper supplies the retained fingerprints, expected revision, retry identity and private implementation-claim credentials. Missing IDs, stale scope, partial/uncertain judgments and unmet start gates still fail through the existing services. A network-ambiguous response retains the same identity for replay; do not replace it blindly or print private session files. If the selected work changes during claiming, the old claim is released. Release remains available after selection changes and clears acknowledged inactive helper state.
+
+The `checkpoint` command above continues to use the same atomic outbox and exact tracking revisions; it never refreshes a stale revision to make a rejected write pass. End-of-turn reminders, offline recovery and conflict reconciliation remain unchanged. The helper is an alternative interface to those contracts, not permission to execute or an independent assessment of real dependencies.
+
 ## Freshness and limits
 
 Connections and stream detail distinguish last context retrieval, last saved progress checkpoint, and an update needed for the latest observed turn. Pending counts are explicitly “at last check”: the server cannot see an offline client's new queue until that client reconnects. MCP verification means connectivity, not current progress. Stored checkpoint summaries are agent reports, not a guarantee that all real-world work was reported.
 
-Hook support follows [official Codex hooks documentation](https://learn.chatgpt.com/docs/hooks) and [Claude Code hooks documentation](https://code.claude.com/docs/en/hooks), checked November 13, 2026. Local adapter tests prove protocol and recovery behavior; actual client trust/loading and fresh-session delivery must be verified separately. No Herdr focus adapter, transcript observer, background execution worker, or automatic Git/SCM observation is introduced.
+Hook support follows [official Codex hooks documentation](https://learn.chatgpt.com/docs/hooks) and [Claude Code hooks documentation](https://code.claude.com/docs/en/hooks), checked November 13, 2026. Local adapter tests prove protocol and recovery behavior; actual client trust/loading and fresh-session delivery must be verified separately. No Herdr focus adapter, transcript observer, background execution worker, or background SCM synchronization is introduced. Optional [read-only MR checks](output-evidence.md) are explicit observations, separate from work reports and synchronization.

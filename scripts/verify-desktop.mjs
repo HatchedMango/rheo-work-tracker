@@ -345,6 +345,12 @@ try {
   }
   const installed = JSON.parse(await workflow(['install', ...workflowArgs]));
   assert(installed.current);
+  assert.equal(installed.scope, 'personal');
+  assert.equal(
+    readFileSync(join(project, 'CLAUDE.md'), 'utf8'),
+    '# Existing project instructions\n',
+    'Personal setup must preserve shared instructions while installed.',
+  );
   assert(!installed.workflowVerified);
   const hookSettings = JSON.parse(
     readFileSync(join(project, '.claude/settings.local.json'), 'utf8'),
@@ -369,6 +375,7 @@ try {
     }),
   );
   assert(startHook.hookSpecificOutput.additionalContext.includes(fixtureStream.outcome));
+  assert(startHook.hookSpecificOutput.additionalContext.includes('Use the work-inbox skill'));
   const missingCheckpoint = JSON.parse(
     await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
   );

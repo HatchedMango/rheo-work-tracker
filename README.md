@@ -47,6 +47,8 @@ See [storage and packaging](docs/desktop.md), [backup and restore](docs/second-m
 
 ## Develop
 
+Unreleased workflow 1.7 updates add personal project setup, optional review/begin/lease helpers, and [read-only GitLab evidence](docs/output-evidence.md). The published 0.9.1 installer above retains its release-time behavior. See the [implementation plan and invariants](docs/work-adoption-plan.md).
+
 Use Node **22.18.0** from `.nvmrc` and npm. Building the Mac app also requires Xcode Command Line Tools; SQLite includes a native component.
 
 ```sh

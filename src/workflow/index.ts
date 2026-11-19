@@ -7,6 +7,7 @@ import { bindingSchema, workflowSetup } from './setup.js';
 import { WORKFLOW_VERSION } from '../shared/streams.js';
 import { runHook, saveCheckpoint, checkpointFile, selectWork, setStopPolicy } from './hooks.js';
 import { SyncOutbox } from './outbox.js';
+import { reviewWork, beginWork, updateWorkLease, outputEvidence } from './operations.js';
 export async function runWorkflow(argv: string[]) {
   const [command, ...args] = argv,
     flags: Record<string, string> = {};
@@ -19,6 +20,39 @@ export async function runWorkflow(argv: string[]) {
     )
       throw new Error('Use --option value pairs.');
     flags[args[i].slice(2)] = args[i + 1];
+  }
+  if (
+    command === 'review' ||
+    command === 'begin' ||
+    command === 'lease' ||
+    command === 'evidence'
+  ) {
+    const f = z
+      .object({
+        binding: z.string().min(1),
+        'session-id': z.string().min(1).max(200),
+        input: z.string().optional(),
+        'scope-stream-id': z.uuid().optional(),
+        action: z.enum(['renew', 'release']).optional(),
+        'output-id': z.uuid().optional(),
+      })
+      .strict()
+      .parse(flags);
+    if (command === 'evidence')
+      return JSON.stringify(await outputEvidence(f.binding, f['session-id'], f['output-id']));
+    if (command === 'review')
+      return JSON.stringify(await reviewWork(f.binding, f['session-id'], f['scope-stream-id']));
+    if (command === 'begin') {
+      if (!f.input)
+        throw new Error('Pass --input with your explicit reviewed IDs and stage judgments.');
+      return JSON.stringify(
+        await beginWork(f.binding, f['session-id'], JSON.parse(readFileSync(f.input, 'utf8'))),
+      );
+    }
+    if (!f.action) throw new Error('Pass --action renew or release.');
+    return JSON.stringify(
+      await updateWorkLease(f.binding, f['session-id'], f.action === 'release'),
+    );
   }
   if (command === 'hook') {
     const f = z
@@ -136,6 +170,7 @@ export async function runWorkflow(argv: string[]) {
       'server-name': z.string().min(1),
       'stream-id': z.uuid().optional(),
       'change-id': z.uuid().optional(),
+      scope: z.enum(['personal', 'project']).optional(),
     })
     .strict()
     .parse(flags);
@@ -149,6 +184,7 @@ export async function runWorkflow(argv: string[]) {
       serverName: f['server-name'],
       streamId: f['stream-id'],
       changeId: f['change-id'],
+      scope: f.scope,
     }),
     null,
     2,

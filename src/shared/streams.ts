@@ -2,7 +2,7 @@ import { requestGuidanceSchema, type RequestGuidance } from './request-guidance.
 import { z } from 'zod';
 import { conversationUrlSchema } from './conversation-schema.js';
 import { referenceSchema } from './contracts.js';
-export const WORKFLOW_VERSION = '1.6.0';
+export const WORKFLOW_VERSION = '1.7.0';
 export const streamScopeSchema = z.object({
   title: z.string().trim().min(1).max(180),
   outcome: z.string().trim().min(1).max(8000),
@@ -278,6 +278,11 @@ export const workflowCapabilities = {
     ],
   },
   checkpoint: { tool: 'sync_work', fallback: 'local workflow checkpoint helper' },
+  helperOperations: {
+    commands: ['review', 'begin', 'lease', 'checkpoint', 'evidence'],
+    agentDependencyJudgmentRequired: true,
+    lowLevelApisRetained: true,
+  },
   clientCheck:
     'Once per native client session, inspect the actual connected tool catalog and schemas before relying on managed implementation. get_workflow advertises the server contract only. Missing tools/fields require client reload/new chat; never fall back to legacy certification. A helper/SDK probe cannot verify the catalog loaded by this chat or automatic hook delivery.',
 } as const;

@@ -6,10 +6,22 @@ import { createApp } from '../../src/server/app.js';
 const dir = mkdtempSync(join(tmpdir(), 'work-inbox-browser-'));
 const store = openStore(join(dir, 'db.sqlite'));
 const origin = 'http://127.0.0.1:4318';
+delete process.env.RHEO_GITLAB_CONFIG;
 const { app, auth, service } = await createApp(store, {
   origin,
   allowSimulation: true,
   publicDir: resolve('dist/public'),
+  integrationDir: join(dir, 'integrations'),
+  gitlabFetch: async (input) => {
+    const url = new URL(String(input));
+    if (url.origin !== 'https://gitlab.example.com') throw new Error('Unexpected fixture host');
+    return Response.json({
+      web_url: 'https://gitlab.example.com/team/project/-/merge_requests/12',
+      state: 'merged',
+      sha: 'a'.repeat(40),
+      head_pipeline: { sha: 'a'.repeat(40), status: 'success' },
+    });
+  },
 });
 const worker = auth.register('worker', 'Browser test worker');
 const agent = auth.register('agent', 'External capture agent');

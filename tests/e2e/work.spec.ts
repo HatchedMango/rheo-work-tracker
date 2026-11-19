@@ -834,9 +834,10 @@ test('streams track directly and show explicit questions, outputs and dependenci
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await change.getByRole('button', { name: 'Publish the contract', exact: true }).click();
   await expect(change.getByRole('link', { name: 'Contract MR' })).toBeVisible();
-  await expect(change.getByText(/available reported by/)).not.toBeVisible();
-  await openDisclosure(change, 'Evidence');
-  await expect(change.getByText(/available reported by/)).toBeVisible();
+  await expect(change.getByText(/available · reported by/)).toBeVisible();
+  await expect(change.getByText('mr ·', { exact: false })).not.toBeVisible();
+  await openDisclosure(change, 'Reported evidence');
+  await expect(change.getByText('mr ·', { exact: false })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('link', { name: 'Contract MR' })).toBeVisible();
 });

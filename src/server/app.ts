@@ -1,4 +1,6 @@
 import { WorkChatService } from '../services/work-chat.js';
+import { OutputEvidenceService } from '../services/output-evidence.js';
+import { observeOutputSchema } from '../shared/output-evidence.js';
 import { DailyProgressService } from '../services/daily-progress.js';
 import { dailyProgressQuerySchema } from '../shared/daily-progress.js';
 import { workChatSchema } from '../shared/work-chat.js';
@@ -46,11 +48,20 @@ export async function createApp(
     connectionDir?: string;
     mcpEntry?: string;
     mcpLauncher?: string;
+    integrationDir?: string;
+    gitlabFetch?: typeof fetch;
   },
 ) {
   const app = Fastify({
     logger: options.logger
-      ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'] }
+      ? {
+          redact: [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'res.headers.set-cookie',
+            'req.body.token',
+          ],
+        }
       : false,
     bodyLimit: 64 * 1024,
   });
@@ -62,6 +73,11 @@ export async function createApp(
   const workChats = new WorkChatService(streams);
   const dailyProgress = new DailyProgressService(store, options.clock);
   const assessments = new DependencyAssessmentService(streams);
+  const outputEvidence = new OutputEvidenceService(
+    streams,
+    options.integrationDir,
+    options.gitlabFetch,
+  );
   const connections = new ConnectionService(store, {
     origin: options.origin,
     directory:
@@ -275,6 +291,22 @@ export async function createApp(
   app.get('/api/work/:id/outputs', async (req) => {
     const p = pageSchema.parse(req.query);
     return streams.outputs(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.get('/api/work/:id/output-evidence', async (req) =>
+    outputEvidence.list(authenticate(req), idOf(req.params)),
+  );
+  app.get('/api/integrations/gitlab', async (req) => outputEvidence.status(authenticate(req)));
+  app.post('/api/integrations/gitlab', async (req) =>
+    outputEvidence.configure(writeActor(req), req.body),
+  );
+  app.post('/api/integrations/gitlab/disconnect', async (req) => {
+    z.object({}).strict().parse(req.body);
+    return outputEvidence.disconnect(writeActor(req));
+  });
+  app.post('/api/work/:id/outputs/:outputId/observe', async (req) => {
+    const params = z.object({ id: z.uuid(), outputId: z.uuid() }).parse(req.params);
+    const input = observeOutputSchema.parse(req.body);
+    return outputEvidence.observe(writeActor(req), params.id, params.outputId, input.revision);
   });
   app.get('/api/streams', async (req) =>
     streams.list(authenticate(req), streamContracts.streamListSchema.parse(req.query)),

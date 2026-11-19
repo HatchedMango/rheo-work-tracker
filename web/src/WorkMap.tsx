@@ -17,6 +17,7 @@ import {
 import { conversationLink } from '../../src/shared/conversation.js';
 import { BriefContent } from './WorkContent.js';
 import { StatusBadge } from './UI.js';
+import { OutputEvidenceView } from './OutputEvidence.js';
 const remembered = (key: string) => {
   try {
     return sessionStorage.getItem(key);
@@ -593,12 +594,21 @@ export function StreamWorkMap({
             {selected.outputs.length > 0 && (
               <div className="map-relation-list">
                 <h4>Outputs</h4>
-                {selected.outputs.map((o) => (
-                  <a key={o.url} href={o.url} target="_blank" rel="noopener noreferrer">
-                    {o.label}
-                    <ArrowUpRight size={12} aria-hidden="true" />
-                  </a>
-                ))}
+                {selected.kind === 'change' ? (
+                  <OutputEvidenceView
+                    key={selected.id}
+                    workId={selected.id}
+                    version={selected.outputs.map((o) => `${o.id}:${o.revision}`).join(',')}
+                    request={request}
+                  />
+                ) : (
+                  selected.outputs.map((o) => (
+                    <a key={o.url} href={o.url} target="_blank" rel="noopener noreferrer">
+                      {o.label}
+                      <ArrowUpRight size={12} aria-hidden="true" />
+                    </a>
+                  ))
+                )}
               </div>
             )}
             <div className="map-open-actions">

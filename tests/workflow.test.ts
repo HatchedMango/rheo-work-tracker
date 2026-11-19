@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { workflowSetup, type SetupOptions } from '../src/workflow/setup.js';
 let dir: string, o: SetupOptions;
 beforeEach(() => {
@@ -21,7 +22,76 @@ beforeEach(() => {
     helper: resolve('dist/workflow/index.js'),
     helperNode: process.execPath,
     serverName: 'work-inbox-test',
+    scope: 'project',
   };
+});
+it('personal setup preserves shared instructions and a clean Git diff, including subprojects and worktrees', () => {
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.com');
+  const original = '# Team rules\nPreserve every instruction.\n';
+  writeFileSync(join(dir, 'AGENTS.md'), original);
+  writeFileSync(join(dir, 'CLAUDE.md'), original);
+  git('add', '.');
+  git('commit', '-qm', 'Fixture');
+  const project = join(dir, 'packages', 'API [one]');
+  mkdirSync(project, { recursive: true });
+  for (const client of ['claude-code', 'codex'] as const) {
+    const opts = { ...o, project, client, scope: 'personal' as const };
+    const before = git('status', '--porcelain', '--untracked-files=all');
+    expect(workflowSetup('preview', opts).scope).toBe('personal');
+    expect(workflowSetup('install', opts).current).toBe(true);
+    expect(workflowSetup('check', opts).current).toBe(true);
+    expect(git('status', '--porcelain', '--untracked-files=all')).toBe(before);
+    expect(existsSync(join(project, 'AGENTS.md'))).toBe(false);
+    expect(existsSync(join(project, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(project, 'CLAUDE.local.md'))).toBe(false);
+    workflowSetup('remove', opts);
+  }
+  expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(original);
+  expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe(original);
+  const worktree = join(dir, 'linked');
+  git('worktree', 'add', '-qb', 'linked', worktree);
+  const opts = { ...o, project: worktree, scope: 'personal' as const };
+  expect(workflowSetup('install', opts).current).toBe(true);
+  expect(execFileSync('git', ['-C', worktree, 'status', '--porcelain'], { encoding: 'utf8' })).toBe(
+    '',
+  );
+  workflowSetup('remove', opts);
+  git('worktree', 'remove', '--force', worktree);
+});
+it('defaults new installs to personal and retains the legacy loading strategy until explicitly migrated', () => {
+  const opts = { ...o, scope: undefined };
+  expect(workflowSetup('install', opts).scope).toBe('personal');
+  expect(existsSync(join(dir, 'AGENTS.md'))).toBe(false);
+  workflowSetup('remove', opts);
+  const original = '# Team rules\n';
+  writeFileSync(join(dir, 'AGENTS.md'), original);
+  workflowSetup('install', o);
+  const manifest = join(dir, '.work-inbox/codex.json');
+  const legacy = JSON.parse(readFileSync(manifest, 'utf8'));
+  delete legacy.scope;
+  writeFileSync(manifest, JSON.stringify(legacy));
+  expect(workflowSetup('check', opts).scope).toBe('project');
+  expect(workflowSetup('install', opts).scope).toBe('project');
+  expect(workflowSetup('install', { ...opts, scope: 'personal' }).scope).toBe('personal');
+  expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(original);
+  expect(workflowSetup('check', opts).current).toBe(true);
+});
+it('refuses tracked personal settings instead of hiding or editing them', () => {
+  execFileSync('git', ['init', '-q', dir]);
+  mkdirSync(join(dir, '.claude'));
+  const path = join(dir, '.claude/settings.local.json');
+  const original = '{"permissions":{"deny":["Bash(rm *)"]}}';
+  writeFileSync(path, original);
+  execFileSync('git', ['-C', dir, 'add', '.claude/settings.local.json']);
+  const opts = { ...o, client: 'claude-code' as const, scope: 'personal' as const };
+  expect(workflowSetup('preview', opts).conflicts.join()).toContain('tracked files');
+  expect(() => workflowSetup('install', opts)).toThrow('No changes made');
+  expect(readFileSync(path, 'utf8')).toBe(original);
+  expect(existsSync(join(dir, '.work-inbox/claude-code.json'))).toBe(false);
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 it('installs, checks, updates selection, and removes only managed Codex guidance', () => {
