@@ -38,8 +38,13 @@ cpSync(nodeLicense, join(runtime, 'LICENSE'));
 cpSync('dist', join(payload, 'dist'), { recursive: true });
 writeFileSync(
   join(payload, 'package.json'),
-  JSON.stringify({ name: pkg.name, version: pkg.version, type: 'module' }),
+  JSON.stringify({ name: pkg.name, version: pkg.version, type: 'module', license: pkg.license }),
 );
+// Keep Rheo's terms with both the native app and its independently usable payload.
+for (const name of ['LICENSE', 'NOTICE']) {
+  cpSync(name, join(resources, name));
+  cpSync(name, join(payload, name));
+}
 let sourceCommit = null,
   sourceDirty = null;
 try {
@@ -80,21 +85,34 @@ for (const [path, info] of Object.entries(lock.packages)) {
   // even when npm classifies them as build-time rather than server dependencies.
   const notices = readdirSync(path).filter(
     (name) =>
-      /^(licen[cs]e|copying|notice)(\.|$)/i.test(name) && statSync(join(path, name)).isFile(),
+      /^(licen[cs]e|copying|notice)([._-]|$)/i.test(name) && statSync(join(path, name)).isFile(),
   );
+  // Some published runtime packages omit their license text. Version-specific
+  // supplemental upstream notices keep those terms present and upgrades explicit.
+  const supplement = join(
+    'third-party-notices',
+    `${encodeURIComponent(metadata.name)}-${metadata.version}`,
+  );
+  const supplemental = existsSync(supplement);
+  if (!info.dev && !notices.length && !supplemental)
+    throw new Error(
+      `Missing license notice for runtime package ${metadata.name}@${metadata.version}.`,
+    );
   const noticeDirectory = join(
     resources,
     'licenses',
     `${encodeURIComponent(metadata.name)}-${metadata.version}`,
   );
-  if (notices.length) mkdirSync(noticeDirectory, { recursive: true });
+  if (notices.length || supplemental) mkdirSync(noticeDirectory, { recursive: true });
   for (const notice of notices) cpSync(join(path, notice), join(noticeDirectory, notice));
+  if (supplemental) cpSync(supplement, noticeDirectory, { recursive: true });
   dependencies.push(
     `${metadata.name}@${metadata.version} — ${metadata.license || 'see package license'}`,
   );
   if (info.dev) continue;
   mkdirSync(dirname(join(payload, path)), { recursive: true });
   cpSync(path, join(payload, path), { recursive: true, dereference: true });
+  if (supplemental) cpSync(supplement, join(payload, path), { recursive: true });
 }
 const native = [];
 function trim(path) {
@@ -111,7 +129,7 @@ function trim(path) {
 trim(payload);
 writeFileSync(
   join(resources, 'THIRD_PARTY_LICENSES.txt'),
-  `Rheo ${pkg.version}\n\nNode ${process.version}: runtime/LICENSE\nServer and frontend/build dependency notices: licenses/.\nServer package licenses are also retained within app/node_modules.\n\n${dependencies.sort().join('\n')}\n`,
+  `Rheo ${pkg.version}\n\nProject terms: LICENSE; required notice: NOTICE.\nThird-party components retain the licenses listed below.\n\nNode ${process.version}: runtime/LICENSE\nServer and frontend/build dependency notices: licenses/.\nServer package licenses are also retained within app/node_modules.\n\n${dependencies.sort().join('\n')}\n`,
 );
 const minimum = process.arch === 'arm64' ? 'arm64-apple-macos13.0' : 'x86_64-apple-macos13.0';
 run('xcrun', [

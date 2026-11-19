@@ -49,6 +49,38 @@ for rejected in ["codex://settings", "codex://new?prompt=x&path=relative", "code
 console.log('PASS: native existing-chat and unsent-draft allowlist rejects other routes.');
 const app = resolve('release/Rheo.app');
 assert(existsSync(app), 'Build the desktop app first.');
+for (const name of ['LICENSE', 'NOTICE']) {
+  const source = readFileSync(name, 'utf8');
+  for (const directory of ['Contents/Resources', 'Contents/Resources/app'])
+    assert.equal(
+      readFileSync(join(app, directory, name), 'utf8'),
+      source,
+      `Preserve project ${name}.`,
+    );
+}
+assert.equal(
+  JSON.parse(readFileSync(join(app, 'Contents/Resources/app/package.json'), 'utf8')).license,
+  JSON.parse(readFileSync('package.json', 'utf8')).license,
+);
+for (const [name, version] of [
+  ['abstract-logging', '2.0.1'],
+  ['drizzle-orm', '0.45.4'],
+]) {
+  const source = readFileSync(join('third-party-notices', `${name}-${version}`, 'LICENSE'), 'utf8');
+  for (const path of [`licenses/${name}-${version}/LICENSE`, `app/node_modules/${name}/LICENSE`])
+    assert.equal(readFileSync(join(app, 'Contents/Resources', path), 'utf8'), source);
+}
+for (const [name, version] of [
+  ['emoji-regex', '10.6.0'],
+  ['jsesc', '3.1.0'],
+])
+  assert.equal(
+    readFileSync(
+      join(app, 'Contents/Resources/licenses', `${name}-${version}`, 'LICENSE-MIT.txt'),
+      'utf8',
+    ),
+    readFileSync(join('node_modules', name, 'LICENSE-MIT.txt'), 'utf8'),
+  );
 const bundleInfo = JSON.parse(
   execFileSync(
     '/usr/bin/plutil',

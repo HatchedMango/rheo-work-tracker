@@ -1,0 +1,10 @@
+Rheo
+
+Required Notice: Copyright 2026 Daniel Longfellow
+
+Licensor: Daniel Longfellow
+
+The PolyForm Shield License 1.0.0 in LICENSE applies to original Rheo material.
+Third-party components retain their own licenses and notices. Mac app builds
+include those terms in THIRD_PARTY_LICENSES.txt, licenses/, runtime/LICENSE,
+and app/node_modules/ within Contents/Resources/.

@@ -59,6 +59,14 @@ if (
   !existsSync(join(resources, 'THIRD_PARTY_LICENSES.txt'))
 )
   throw new Error('Missing runtime/dependency notices.');
+for (const name of ['LICENSE', 'NOTICE']) {
+  const source = readFileSync(name, 'utf8');
+  for (const directory of [resources, join(resources, 'app')])
+    if (readFileSync(join(directory, name), 'utf8') !== source)
+      throw new Error(`Bundled project ${name} differs from source.`);
+}
+if (JSON.parse(readFileSync(join(resources, 'app/package.json'), 'utf8')).license !== pkg.license)
+  throw new Error('Bundled project license metadata differs from source.');
 execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', join(root, 'Rheo.app')], {
   stdio: 'inherit',
 });

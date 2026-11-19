@@ -81,6 +81,14 @@ npm run test:e2e
 
 Tests use isolated data and ports. GitHub **Checks** runs source/browser validation; the manually dispatched **Mac trial package** workflow verifies and retains a private installer artifact set. Neither workflow publishes releases automatically. Use a redacted secret-content scan in addition to the repository path check before publishing.
 
+## License
+
+Rheo is source-available under the [PolyForm Shield License 1.0.0](LICENSE), with Daniel Longfellow as licensor. It is not licensed as open-source software.
+
+Shield permits noncompeting use, modification and redistribution, including ordinary personal and internal workplace use. Providing a competing product or service using the software is restricted, even when offered free of charge. The full license controls; there is no automatic conversion to a permissive license.
+
+Retain the [required notice](NOTICE) when redistributing. Third-party components keep their own licenses; new Mac app builds include both Rheo's terms and dependency/runtime notices. See [licensing details](docs/licensing.md).
+
 ## Guides
 
 - [Existing-work onboarding](docs/existing-work-onboarding.md)
@@ -89,4 +97,4 @@ Tests use isolated data and ports. GitHub **Checks** runs source/browser validat
 - [Desktop storage, import, and packaging](docs/desktop.md)
 - [Architecture](docs/architecture.md)
 
-The private trial grants no open-source license. Dependency/runtime notices are included in the Mac bundle. Local automated checks do not establish fresh-machine installation, work-device policy, or real-client automatic hook behavior; those remain trial observations to collect.
+Local automated checks do not establish fresh-machine installation, work-device policy, or real-client automatic hook behavior; those remain trial observations to collect.
