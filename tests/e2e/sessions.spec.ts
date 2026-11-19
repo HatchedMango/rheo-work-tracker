@@ -105,11 +105,10 @@ test('finds session handoffs on changes and streams with pagination and safe ret
     inspector.getByRole('link', { name: `Open Codex chat ${sessionId.slice(-6)}` }),
   ).toBeVisible();
   await expect(inspector.getByText('Second handoff is separate')).toHaveCount(0);
-  // The same work owns the same links in List and the narrow fallback.
-  await page.getByRole('button', { name: 'Map', exact: true }).click();
+  // The same work owns its links in the active map and narrow fallback.
+  await expect(page.getByRole('group', { name: 'Work presentation' })).toHaveCount(0);
   await expect(page.locator('.work-map-edge')).toHaveCount(1);
   await page.screenshot({ path: 'test-results/integrated-chats-map.png', fullPage: true });
-  await page.getByRole('button', { name: 'List', exact: true }).click();
   await expect(aCard.getByRole('link')).toHaveCount(1);
   await page.screenshot({ path: 'test-results/integrated-chats-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

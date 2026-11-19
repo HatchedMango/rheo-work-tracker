@@ -29,7 +29,7 @@ Each Mac owns its own work and agent connections. Create a fresh connection on t
 
 ## Follow progress throughout the day
 
-- **Streams** groups work around concrete goals. Switch between a work map and list, select a card, and follow its related chats and context. Arrows show active prerequisites; finished cards have no outgoing arrows, and recorded relationships remain in the details.
+- **Streams** groups work around concrete goals. Active work appears in a map, with finished work in a compact list below it. Select either to follow its related chats and context. Arrows show active prerequisites; finished cards have no outgoing arrows, and recorded relationships remain in the details.
 - **Needs you** focuses on the exact question or action, with steps, a copyable instruction, and a short reason when useful. Answer in your agent chat; permitted agents can reconcile the response.
 - **Start / Resume** prepares new work with focused context or returns to the chat for the same unfinished change. Opening a chat does not mark work started or done.
 - **Changes today** counts each change once at its first delivery or manual completion. Set a daily target and see exact progress above it. Answering questions, signing in, and other human unblock steps do not earn change credit. [Counting details](docs/daily-progress-goal.md).

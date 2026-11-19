@@ -810,13 +810,14 @@ test('streams track directly and show explicit questions, outputs and dependenci
   await expect(inspector).toContainText('Recorded satisfied');
   await expect(detail.locator('.work-map-edge.selected')).toHaveCount(1);
   await page.screenshot({ path: 'test-results/stream-desktop.png', fullPage: true });
-  await detail.getByRole('button', { name: 'List', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(detail.locator('.mode-list')).toBeVisible();
   await expect(nodes).toHaveCount(3);
   await page.reload();
   await expect(detail.locator('.mode-list')).toBeVisible();
   await expect(inspector.getByRole('heading', { name: next.title, exact: true })).toBeVisible();
-  await detail.getByRole('button', { name: 'Map', exact: true }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(detail.locator('.mode-map')).toBeVisible();
   await inspector.getByRole('button', { name: 'Open change' }).click();
   const change = page.getByRole('region', { name: 'Work detail' });
   await expect(change.getByText('Assessment stale', { exact: true })).not.toBeVisible();
@@ -1018,11 +1019,9 @@ test('tracked streams stay quiet while a simple human request links to chat and 
   await page.goto(`/?view=streams&stream=${root.id}`);
   await expect(page.getByRole('heading', { name: root.title, exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await expect(region.getByRole('button', { name: 'List', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
-  await expect(region.getByRole('button', { name: 'Map', exact: true })).toBeDisabled();
+  await expect(region.locator('.mode-list')).toBeVisible();
+  await expect(region.getByRole('group', { name: 'Work presentation' })).toHaveCount(0);
+  await expect(region.locator('.work-map-edges')).toHaveCount(0);
   await expect(region.locator('.work-map-node').filter({ hasText: parallel.title })).toBeVisible();
   await page.screenshot({ path: 'test-results/oversight-mobile.png', fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -1097,7 +1096,8 @@ test('explicit relationship reports distinguish none, uncertainty and stale scop
   await openDisclosure(inspector, 'No prerequisites');
   await expect(inspector).toContainText('Before starting · None identified');
   await expect(inspector).toContainText('existing interface is sufficient');
-  await region.getByRole('button', { name: 'List', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(region.locator('.mode-list')).toBeVisible();
   await expect(node(independent.id)).toContainText('No prerequisites');
   await node(uncertain.id).click();
   await openDisclosure(inspector, 'Links uncertain');
@@ -1108,7 +1108,8 @@ test('explicit relationship reports distinguish none, uncertainty and stale scop
   await node(independent.id).click();
   await openDisclosure(inspector, 'Links need rechecking');
   await expect(inspector).toContainText('Related work or scope changed');
-  await region.getByRole('button', { name: 'Map', exact: true }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(region.locator('.mode-map')).toBeVisible();
   await page.screenshot({ path: 'test-results/dependency-assessment-map.png', fullPage: true });
   await inspector.getByRole('button', { name: 'Open change' }).click();
   const detail = page.getByRole('region', { name: 'Work detail' });
@@ -1118,10 +1119,7 @@ test('explicit relationship reports distinguish none, uncertainty and stale scop
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.goto(`/?view=streams&stream=${s.id}`);
-  await expect(page.getByRole('button', { name: 'List', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(region.locator('.mode-list')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/dependency-assessment-mobile.png', fullPage: true });
 });
@@ -1303,10 +1301,8 @@ test('stream connectors stay solid, separate and clear of cards after rows wrap'
   await expect.poll(async () => (await geometry()).collisions).toEqual([]);
   await region.screenshot({ path: 'test-results/stream-connectors-finished.png' });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(region.getByRole('button', { name: 'List', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(region.locator('.mode-list')).toBeVisible();
+  await expect(region.getByRole('group', { name: 'Work presentation' })).toHaveCount(0);
   await expect(region.locator('.work-map-edges')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

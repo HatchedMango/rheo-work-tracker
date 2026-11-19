@@ -58,10 +58,18 @@ test('whole work cards keep their tone with selection, chat footers, hover and n
         eventId: randomUUID(),
         occurredAt: Date.now(),
       });
+  await page.addInitScript(() => sessionStorage.setItem('work-map-view', 'list'));
   await page.goto(`/?view=streams&stream=${s.id}`);
+  await expect(page.locator('.work-map-layout.mode-map')).toBeVisible();
   const card = (id: string) => page.locator(`[data-map-card="${id}"]`);
   await expect(card(human.id)).toBeVisible();
-  await page.getByRole('button', { name: 'Map', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Work presentation' })).toHaveCount(0);
+  await expect(
+    page.locator('.work-map-history').locator(`[data-map-card="${quiet.id}"]`),
+  ).toBeVisible();
+  await expect(
+    page.locator('.work-map-groups').locator(`[data-map-card="${quiet.id}"]`),
+  ).toHaveCount(0);
   const streamTitle = await page.locator('.stream-title').boundingBox();
   const firstCard = await card(human.id).boundingBox();
   expect(firstCard!.y - (streamTitle!.y + streamTitle!.height)).toBeLessThan(130);
@@ -104,15 +112,13 @@ test('whole work cards keep their tone with selection, chat footers, hover and n
   await expect(firstChat).toHaveCSS('outline-width', '2px');
   await card(human.id).locator('.work-map-node').click();
   await page.screenshot({ path: 'test-results/card-surfaces-map.png', fullPage: true });
-  await page.getByRole('button', { name: 'List', exact: true }).click();
+  await expect(page.locator('.work-map-history .work-map-item')).toHaveCSS('flex-direction', 'row');
   await check();
   await page.screenshot({ path: 'test-results/card-surfaces-list.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await check();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  // The stream caption must not be squeezed under full-width mobile tabs.
-  const caption = await page.locator('.work-map-caption').boundingBox();
-  const tabs = await page.getByRole('group', { name: 'Work presentation' }).boundingBox();
-  expect(caption!.x + caption!.width).toBeLessThanOrEqual(tabs!.x);
+  await expect(page.locator('.work-map-edges')).toHaveCount(0);
+  await expect(page.locator('.work-map-history .work-map-item')).toBeVisible();
   await page.screenshot({ path: 'test-results/card-surfaces-mobile.png', fullPage: true });
 });
