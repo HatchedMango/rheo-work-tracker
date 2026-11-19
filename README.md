@@ -4,13 +4,13 @@ Keep work streams, agent context, and daily progress connected.
 
 Rheo (REE-oh) is a local Mac app that helps you see what your agents are working toward, how the work connects, and what needs your attention. Continue working in your usual Claude Code or Codex chats; Rheo keeps the goals, decisions, unfinished changes, and handoffs together.
 
-**Private trial 0.9.0 · Apple Silicon · macOS 13+ · Agent workflow 1.6.0**
+**Mac trial 0.9.1 · Apple Silicon · macOS 13+ · Agent workflow 1.6.0**
 
 ## Install
 
-Download the [Rheo 0.9.0 private trial](https://github.com/HatchedMango/rheo-work-tracker/releases/tag/v0.9.0). Repository access is required.
+Download the [Rheo 0.9.1 Mac trial](https://github.com/HatchedMango/rheo-downloads/releases/tag/v0.9.1). Public downloads are hosted separately from this private development repository; no GitHub sign-in is required.
 
-1. Download the **macOS arm64 DMG** and **SHA256SUMS**. Compare `shasum -a 256 Rheo-0.9.0-macOS-arm64.dmg` with its checksum entry.
+1. Download the **macOS arm64 DMG** and **SHA256SUMS**. Compare `shasum -a 256 Rheo-0.9.1-macOS-arm64.dmg` with its checksum entry.
 2. Drag **Rheo** into **Applications** and launch it. The app includes its runtime; Node, npm, and a source checkout are not required.
 3. Open **Connections → Connect an agent**. Give its setup prompt to Claude Code or Codex on this Mac, then verify a real client tool call and finish the connection.
 4. Continue into **Set up existing work** to bring your active projects into Rheo.
@@ -66,7 +66,7 @@ npm run desktop:verify
 npm run release:check
 ```
 
-Artifacts include `release/Rheo.app`, versioned ZIP/DMG files, build provenance, and checksums. Release verification requires a clean Git checkout and matching runtime. See [desktop packaging](docs/desktop.md) and [private publishing](docs/publish-private-trial.md).
+Artifacts include `release/Rheo.app`, versioned ZIP/DMG files, build provenance, and checksums. Release verification requires a clean Git checkout and matching runtime. See [desktop packaging](docs/desktop.md) and [public installer distribution](docs/public-distribution.md). The [private trial publishing guide](docs/publish-private-trial.md) describes the older private-only channel.
 
 Run the source checks:
 

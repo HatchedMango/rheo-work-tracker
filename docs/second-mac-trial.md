@@ -4,7 +4,7 @@ This trial targets an Apple Silicon Mac running macOS 13+. It creates separate w
 
 ## Install and connect
 
-1. Obtain the versioned DMG/ZIP and matching `SHA256SUMS` from the private GitHub prerelease, once published. Only people with access to the private repository can download it. Compare `shasum -a 256 Rheo-0.9.0-macOS-arm64.dmg` with its checksum entry. If all listed files were downloaded together, `shasum -a 256 -c SHA256SUMS` checks the set.
+1. Obtain the versioned DMG/ZIP and matching `SHA256SUMS` from the [public Mac trial downloads](https://github.com/HatchedMango/rheo-downloads/releases/tag/v0.9.1). No GitHub sign-in or source-repository access is needed. Compare `shasum -a 256 Rheo-0.9.1-macOS-arm64.dmg` with its checksum entry. If all listed files were downloaded together, `shasum -a 256 -c SHA256SUMS` checks the set.
 2. The trial is ad-hoc signed and not notarized. If macOS or device management blocks it, build from the private source checkout on this Mac if permitted, or wait for a Developer ID signed/notarized build. Do not disable Gatekeeper, strip quarantine flags or change work-device security policy for this trial.
 3. Drag Rheo into Applications and launch it once from there. First launch creates local data under `~/Library/Application Support/Work Inbox/`; it should not display the first Mac's streams or connections.
 4. Open Connections and create a new connection. Give the setup prompt to Codex or Claude with configuration access on this Mac. Preserve other MCP servers. Verify using the actual client's `list_work` tool; an initially empty inbox is expected. Finish the connection only after that succeeds.
@@ -55,4 +55,4 @@ The bundle contains `Contents/Resources/BUILD_INFO.json`. The sibling `.build.js
 
 Build a release from a clean Git checkout using `.nvmrc`, `npm ci`, `npm run desktop:build`, `npm run desktop:verify` and `npm run release:check`. Publish only the versioned ZIP/DMG, matching build metadata and `SHA256SUMS`, never the application data or the whole working directory. GitHub's manually dispatched package workflow produces the same artifact set without publishing it.
 
-Developer ID signing/notarization, actual second-Mac install/download behavior and a real agent workflow remain separate checks until observed. An Apple Development certificate is not a Developer ID distribution identity. The private trial does not decide the project's public license.
+Developer ID signing/notarization, actual second-Mac installation and a real agent workflow remain separate checks until observed. An Apple Development certificate is not a Developer ID distribution identity. Rheo's [Shield license](../LICENSE) and third-party notices are included in new builds.
