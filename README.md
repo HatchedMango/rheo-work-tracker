@@ -8,7 +8,7 @@ Rheo (REE-oh) is a local Mac app that helps you see what your agents are working
 
 ## Install
 
-Download the [Rheo 0.9.0 private trial](https://github.com/HatchedMango/WorkInbox/releases/tag/v0.9.0). Repository access is required.
+Download the [Rheo 0.9.0 private trial](https://github.com/HatchedMango/rheo-work-tracker/releases/tag/v0.9.0). Repository access is required.
 
 1. Download the **macOS arm64 DMG** and **SHA256SUMS**. Compare `shasum -a 256 Rheo-0.9.0-macOS-arm64.dmg` with its checksum entry.
 2. Drag **Rheo** into **Applications** and launch it. The app includes its runtime; Node, npm, and a source checkout are not required.

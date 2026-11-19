@@ -1,6 +1,6 @@
 # Publish the private Mac trial
 
-The intended first repository is `HatchedMango/WorkInbox`, **private**. The connected GitHub app can read account/repository data but cannot create repositories or upload release assets. GitHub CLI and browser sign-in are separate. Finish the local checks and commit before publishing; never copy a connector token or credential into commands/chat.
+The trial repository is `HatchedMango/rheo-work-tracker`, **private**. The connected GitHub app can read account/repository data but cannot create repositories or upload release assets. GitHub CLI and browser sign-in are separate. Finish the local checks and commit before publishing; never copy a connector token or credential into commands/chat.
 
 ## Authenticate and create the repository
 
@@ -13,16 +13,16 @@ gh auth status
 
 Complete the browser/device authorization yourself. The additional `workflow` scope is needed to push the prepared GitHub Actions workflow files; review the requested repository/workflow access in that authorization. If GitHub proposes permissions or account changes beyond what you intend, stop rather than accepting them automatically. Do not paste tokens into this repository or chat.
 
-After authentication, first check whether the intended repository already exists:
+After authentication, inspect `git remote -v` first. Use the existing private remote when it is the intended repository; resolve a different remote before creating or pushing anything. Never continue to a push after a failed remote-add command. Check the intended repository:
 
 ```sh
-gh repo view HatchedMango/WorkInbox --json nameWithOwner,visibility,url
+gh repo view HatchedMango/rheo-work-tracker --json nameWithOwner,visibility,url
 ```
 
 Only if it genuinely does not exist, create it without README/license initialization:
 
 ```sh
-gh repo create HatchedMango/WorkInbox --private --description 'Local work context and progress for agent workflows'
+gh repo create HatchedMango/rheo-work-tracker --private --description 'Local work context and progress for agent workflows'
 ```
 
 If a repository exists, confirm it is the intended private repository and inspect its history before pushing; do not overwrite a conflicting repository or force-push. Do not change an existing public repository's visibility automatically. No organization access, collaborators or public visibility are needed for this trial.
@@ -32,10 +32,10 @@ If a repository exists, confirm it is the intended private repository and inspec
 From the clean source checkout, inspect `git remote -v`. If origin is absent, add the intended URL; if it differs, resolve that conflict before proceeding:
 
 ```sh
-git remote add origin https://github.com/HatchedMango/WorkInbox.git
+git remote add origin https://github.com/HatchedMango/rheo-work-tracker.git
 gh auth setup-git
 git push origin HEAD:main
-gh repo edit HatchedMango/WorkInbox --default-branch main
+gh repo edit HatchedMango/rheo-work-tracker --default-branch main
 ```
 
 This preserves the local working branch and publishes its reviewed commit as the new remote main. Do not use `--force`, push unrelated branches or upload local work/credentials. Verify the remote commit and private visibility, then watch Checks finish. A local validation run does not prove GitHub-hosted CI passed.
@@ -56,7 +56,7 @@ Run a redacted all-history Gitleaks scan before uploading. Inspect `release/Rheo
 
 ```sh
 gh release create v0.9.0 \
-  --repo HatchedMango/WorkInbox \
+  --repo HatchedMango/rheo-work-tracker \
   --target "$(git rev-parse HEAD)" \
   --prerelease \
   --title 'Rheo 0.9.0 — private Mac trial' \
