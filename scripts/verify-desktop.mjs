@@ -293,6 +293,7 @@ try {
     helper = join(desktop, 'bin/work-inbox-workflow');
   mkdirSync(project);
   writeFileSync(join(project, 'CLAUDE.md'), '# Existing project instructions\n');
+  execFileSync('/usr/bin/git', ['-C', project, 'init', '-b', 'fixture-work'], { stdio: 'pipe' });
   const claudeSetup = await ownerRequest('/api/connections', {
     client: 'claude-code',
     name: 'Packaged existing-project agent',
@@ -381,6 +382,18 @@ try {
   assert(JSON.parse(await workflow(['check', ...workflowArgs])).current);
   assert.equal(hookSettings.hooks.Stop.length, 1);
   const binding = join(project, '.work-inbox/claude-code.json');
+  const bound = JSON.parse(
+    await workflow([
+      'bind',
+      '--binding',
+      binding,
+      '--branch',
+      'fixture-work',
+      '--stream-id',
+      fixtureStream.id,
+    ]),
+  );
+  assert.equal(bound.executionAuthority, false);
   const session = { session_id: 'packaged-native-session' };
   const startHook = JSON.parse(
     await workflow(['hook', '--binding', binding], {
@@ -391,6 +404,7 @@ try {
   );
   assert(startHook.hookSpecificOutput.additionalContext.includes(fixtureStream.outcome));
   assert(startHook.hookSpecificOutput.additionalContext.includes('Use the work-inbox skill'));
+  assert(startHook.hookSpecificOutput.additionalContext.includes('"source":"branch"'));
   const missingCheckpoint = JSON.parse(
     await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
   );
@@ -403,19 +417,13 @@ try {
     undefined,
     'A new helper process must retain reminder suppression',
   );
-  const checkpointFile = join(temporary, 'checkpoint.json');
-  writeFileSync(
-    checkpointFile,
-    JSON.stringify({ summary: 'Packaged lifecycle checkpoint verified; no execution started.' }),
-    { mode: 0o600 },
-  );
   const checkpoint = JSON.parse(
     await workflow([
       'checkpoint',
       '--binding',
       binding,
-      '--input',
-      checkpointFile,
+      '--summary',
+      'Packaged lifecycle checkpoint verified; no execution started.',
       '--session-id',
       session.session_id,
     ]),

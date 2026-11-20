@@ -10,6 +10,8 @@ export type SessionState = {
   selected?: { streamId?: string; changeId?: string };
   stopPolicy?: StopPolicy;
   fullContextLoaded?: boolean;
+  selectionKey?: string;
+  refresh?: Record<string, string>;
   reminder?: { turnId: string; checkpointAt: number | null };
   begin?: {
     reviewId: string;

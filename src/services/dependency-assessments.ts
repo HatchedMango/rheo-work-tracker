@@ -179,6 +179,10 @@ function latest(store: Store, id: string, reportId?: string) {
     )
     .get(reportId ?? id) as Row | undefined;
 }
+// Freshness only: calculating a fingerprint never certifies that records were reviewed.
+export function dependencyScopeFingerprint(store: Store, target: c.AssessmentTarget) {
+  return inventory(store, target, undefined).fingerprint;
+}
 export function readDependencyAssessment(
   store: Store,
   target: c.AssessmentTarget,

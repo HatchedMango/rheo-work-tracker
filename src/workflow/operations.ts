@@ -9,6 +9,7 @@ import { readSession, withSession } from './session-state.js';
 import { assessmentReportSchema } from '../shared/dependency-assessments.js';
 import { WORKFLOW_VERSION, type Claim } from '../shared/streams.js';
 import { hash } from '../services/auth.js';
+import { resolveWorkSelection } from './work-bindings.js';
 
 export const beginInputSchema = assessmentReportSchema
   .pick({
@@ -39,7 +40,10 @@ function connection(
   const binding = bindingSchema.parse(JSON.parse(readFileSync(bindingPath, 'utf8')));
   if (binding.version !== WORKFLOW_VERSION) throw new Error('Update the installed workflow first.');
   const outbox = new SyncOutbox(binding.credentialFile, binding.project, binding.client);
-  const selected = readSession(outbox, sessionId).selected ?? binding;
+  const state = readSession(outbox, sessionId);
+  const selected = requireChange
+    ? resolveWorkSelection(binding, outbox, state).selected
+    : (state.selected ?? binding);
   if (requireChange && !selected.changeId)
     throw new Error('Explicitly select a change before reviewing or beginning work.');
   return {
@@ -163,7 +167,7 @@ async function beginWorkOnce(bindingPath: string, sessionId: string, input: unkn
     inventory: Inventory;
   };
   const sameSelection = () => {
-    const current = readSession(outbox, sessionId).selected ?? binding;
+    const current = resolveWorkSelection(binding, outbox, readSession(outbox, sessionId)).selected;
     return current.changeId === selected.changeId && current.streamId === selected.streamId;
   };
   if (

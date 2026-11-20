@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createSchema } from '../src/shared/contracts.js';
 import { createServer } from 'node:net';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -525,6 +526,127 @@ it('persists project checkpoint preferences across sessions and setup while hono
     await expect(
       runWorkflow(['mode', '--binding', f.binding, '--stop-policy', 'observe']),
     ).rejects.toThrow('session-id');
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+it('sends minimal unchanged refreshes, detects clipped changes and forces full recovery after compaction', async () => {
+  const f = await fixture();
+  try {
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    const input = { session_id: 'delta-chat', hook_event_name: 'UserPromptSubmit' };
+    await runHook(f.binding, { ...input, hook_event_name: 'SessionStart', source: 'startup' });
+    const first = (await runHook(f.binding, { ...input, turn_id: 'one' })).hookSpecificOutput!
+      .additionalContext;
+    const unchanged = (await runHook(f.binding, { ...input, turn_id: 'two' })).hookSpecificOutput!
+      .additionalContext;
+    expect(first).toContain('"mode":"delta"');
+    expect(unchanged).toContain('"changed":{}');
+    expect(Buffer.byteLength(unchanged)).toBeLessThan(550);
+    const parse = (s: string) => JSON.parse(s.slice(s.indexOf('{'), s.indexOf('\n')));
+    expect(parse(unchanged).base).toBe(parse(first).cursor);
+    f.streams.recordContext(f.agent, f.stream.id, {
+      kind: 'decision',
+      body: 'A new decision outside the compact request list.',
+      idempotencyKey: randomUUID(),
+    });
+    const decision = parse(
+      (await runHook(f.binding, { ...input, turn_id: 'decision' })).hookSpecificOutput!
+        .additionalContext,
+    );
+    expect(decision.changed).toHaveProperty('freshness');
+    expect(decision.cursor).not.toBe(parse(unchanged).cursor);
+    const current = f.streams.get(f.agent, f.stream.id);
+    f.streams.update(f.agent, current.id, {
+      revision: current.revision,
+      context: 'A retained decision beyond the compact fields.',
+    });
+    const changed = (await runHook(f.binding, { ...input, turn_id: 'three' })).hookSpecificOutput!
+      .additionalContext;
+    expect(parse(changed).changed).toHaveProperty('freshness');
+    expect(parse(changed).cursor).not.toBe(parse(unchanged).cursor);
+    expect(
+      f.sync.list({ id: 'owner', scope: 'owner', ownerId: 'owner' }).items[0].needsCheckpoint,
+    ).toBe(1);
+    const full = (
+      await runHook(f.binding, {
+        ...input,
+        hook_event_name: 'SessionStart',
+        source: 'compact',
+        turn_id: 'three',
+      })
+    ).hookSpecificOutput!.additionalContext;
+    expect(full).not.toContain('"mode":"delta"');
+    expect(full).toContain('A retained decision');
+    const recovered = parse(
+      (await runHook(f.binding, { ...input, turn_id: 'four' })).hookSpecificOutput!
+        .additionalContext,
+    );
+    expect(recovered.base).toBeNull();
+    expect(recovered.changed).toHaveProperty('stream');
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+it('submits direct checkpoints through the existing outbox and keeps stale revisions rejected', async () => {
+  const f = await fixture();
+  try {
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    const { runWorkflow } = await import('../src/workflow/index.js');
+    const session = 'direct-checkpoint';
+    await runHook(f.binding, { session_id: session, hook_event_name: 'SessionStart' });
+    const call = (...flags: string[]) =>
+      runWorkflow(['checkpoint', '--binding', f.binding, '--session-id', session, ...flags]);
+    expect(JSON.parse(await call('--summary', 'Recorded the useful result.'))).toMatchObject({
+      recorded: true,
+      pending: 0,
+      conflicts: [],
+    });
+    await expect(call('--summary', 'Working', '--progress', 'working')).rejects.toThrow(
+      'exact --revision',
+    );
+    const work = f.service.create(
+      f.agent,
+      createSchema.parse({
+        title: 'A change',
+        objective: 'Produce an output',
+        streamId: f.stream.id,
+      }),
+    );
+    await selectWork(f.binding, session, { streamId: f.stream.id, changeId: work.id });
+    const revision = f.service.get(f.agent, work.id).tracking.revision;
+    const saved = JSON.parse(
+      await call(
+        '--summary',
+        'Implementation started.',
+        '--progress',
+        'working',
+        '--revision',
+        String(revision),
+      ),
+    );
+    expect(saved.recorded).toBe(true);
+    expect(f.service.get(f.agent, work.id).tracking.progress).toBe('working');
+    const stale = JSON.parse(
+      await call(
+        '--summary',
+        'Stale progress.',
+        '--progress',
+        'review',
+        '--revision',
+        String(revision),
+      ),
+    );
+    expect(stale.recorded).toBe(false);
+    expect(stale.conflicts).toHaveLength(1);
+    expect(f.service.get(f.agent, work.id).tracking.progress).toBe('working');
+    expect(f.store.raw.prepare('SELECT count(*) n FROM change_completions').get()).toEqual({
+      n: 0,
+    });
   } finally {
     await f.app.close();
     f.store.close();

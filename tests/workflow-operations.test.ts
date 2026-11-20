@@ -190,3 +190,110 @@ it('clears an acknowledged inactive lease without reclaiming or delivering work'
   });
   expect(f.service.get(f.actor, f.change.id).tracking.progress).not.toBe('delivered');
 });
+
+it('recovers recorded branch work with session precedence and never guesses from branch names', async () => {
+  const f = await fixture();
+  const { execFileSync } = await import('node:child_process');
+  const { runWorkflow } = await import('../src/workflow/index.js');
+  const { runHook, saveCheckpointValue, selectWork, useWorkBinding } =
+    await import('../src/workflow/hooks.js');
+  const { resolveWorkSelection } = await import('../src/workflow/work-bindings.js');
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', f.dir, ...args], { stdio: 'pipe', encoding: 'utf8' }).trim();
+  git('init', '-b', 'feature/unfamiliar-name');
+  const opts = JSON.parse(readFileSync(f.binding, 'utf8'));
+  delete opts.streamId;
+  delete opts.changeId;
+  writeFileSync(f.binding, JSON.stringify(opts));
+  expect(resolveWorkSelection(opts, f.outbox, {}).selected.changeId).toBeUndefined();
+  await runWorkflow([
+    'bind',
+    '--binding',
+    f.binding,
+    '--branch',
+    'feature/unfamiliar-name',
+    '--stream-id',
+    f.stream.id,
+    '--change-id',
+    f.change.id,
+  ]);
+  const context = await runHook(f.binding, {
+    session_id: f.session,
+    hook_event_name: 'SessionStart',
+  });
+  expect(context.hookSpecificOutput?.additionalContext).toContain('"source":"branch"');
+  expect(
+    (await reviewWork(f.binding, f.session)).items.some((item) => item.id === f.change.id),
+  ).toBe(true);
+  const reviewed = await reviewWork(f.binding, f.session);
+  await beginWork(f.binding, f.session, judgment(reviewed));
+  expect(statSync(join(f.outbox.directory, 'work-bindings.json')).mode & 0o777).toBe(0o600);
+  expect(
+    resolveWorkSelection(opts, new SyncOutbox(f.outbox.credentialFile, f.dir, 'claude-code'), {})
+      .selected.changeId,
+  ).toBeUndefined();
+  expect(
+    resolveWorkSelection(
+      opts,
+      new SyncOutbox(join(f.dir, 'different-credential.json'), f.dir, 'codex'),
+      {},
+    ).selected.changeId,
+  ).toBeUndefined();
+  const { mkdirSync, copyFileSync } = await import('node:fs');
+  const nested = join(f.dir, 'different-worktree');
+  mkdirSync(nested);
+  execFileSync('git', ['-C', nested, 'init', '-b', 'feature/unfamiliar-name'], { stdio: 'pipe' });
+  const different = new SyncOutbox(f.outbox.credentialFile, nested, 'codex');
+  copyFileSync(
+    join(f.outbox.directory, 'work-bindings.json'),
+    join(different.directory, 'work-bindings.json'),
+  );
+  expect(
+    resolveWorkSelection({ ...opts, project: nested }, different, {}).selected.changeId,
+  ).toBeUndefined();
+  const other = f.streams.submit(f.actor, {
+    title: 'Other goal',
+    outcome: 'Another output',
+    idempotencyKey: randomUUID(),
+  });
+  await expect(
+    runWorkflow([
+      'bind',
+      '--binding',
+      f.binding,
+      '--branch',
+      'feature/unfamiliar-name',
+      '--stream-id',
+      other.id,
+    ]),
+  ).rejects.toThrow('different work binding');
+  await selectWork(f.binding, f.session, { streamId: other.id });
+  expect(resolveWorkSelection(opts, f.outbox, readSession(f.outbox, f.session)).source).toBe(
+    'session',
+  );
+  await useWorkBinding(f.binding, f.session);
+  expect(
+    resolveWorkSelection(opts, f.outbox, readSession(f.outbox, f.session)).selected.changeId,
+  ).toBe(f.change.id);
+  git('symbolic-ref', 'HEAD', 'refs/heads/unbound-branch');
+  await expect(
+    saveCheckpointValue(f.binding, { summary: 'Wrong branch' }, f.session),
+  ).rejects.toThrow('selection required');
+  expect(resolveWorkSelection(opts, f.outbox, {}).selected.changeId).toBeUndefined();
+  git('symbolic-ref', 'HEAD', 'refs/heads/feature/unfamiliar-name');
+  expect(
+    (await runHook(f.binding, { session_id: 'brand-new-chat', hook_event_name: 'SessionStart' }))
+      .hookSpecificOutput?.additionalContext,
+  ).toContain(f.change.id);
+  const { renameSync } = await import('node:fs');
+  renameSync(join(f.dir, '.git'), join(f.dir, 'git-unavailable'));
+  try {
+    expect(() => resolveWorkSelection(opts, f.outbox, {})).toThrow('available Git metadata');
+    await updateWorkLease(f.binding, f.session, true);
+    expect(f.service.get(f.actor, f.change.id).tracking.claim?.state).toBe('released');
+  } finally {
+    renameSync(join(f.dir, 'git-unavailable'), join(f.dir, '.git'));
+  }
+  await runWorkflow(['unbind', '--binding', f.binding, '--branch', 'feature/unfamiliar-name']);
+  expect(resolveWorkSelection(opts, f.outbox, {}).selected.changeId).toBeUndefined();
+});

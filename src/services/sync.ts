@@ -12,6 +12,7 @@ import { hash } from './auth.js';
 import { WORKFLOW_VERSION } from '../shared/streams.js';
 import { ensure } from './errors.js';
 import { allowFeedback } from './feedback.js';
+import { dependencyScopeFingerprint } from './dependency-assessments.js';
 import type { OversightService } from './oversight.js';
 export class SyncService {
   constructor(public oversight: OversightService) {}
@@ -68,6 +69,38 @@ export class SyncService {
       mode: 'compact',
       complete: false,
       workflowVersion: WORKFLOW_VERSION,
+      freshness: hash(
+        JSON.stringify({
+          stream,
+          change,
+          scope:
+            changeId || streamId
+              ? dependencyScopeFingerprint(this.work.store, {
+                  id: (changeId ?? streamId)!,
+                  kind: changeId ? 'change' : 'stream',
+                })
+              : null,
+          entries: streamId
+            ? this.raw
+                .prepare(
+                  'SELECT id,revision,state FROM stream_context WHERE streamId=? ORDER BY id',
+                )
+                .all(streamId)
+            : [],
+          actions: streamId
+            ? this.raw
+                .prepare('SELECT id,revision,state FROM human_actions WHERE streamId=? ORDER BY id')
+                .all(streamId)
+            : [],
+          observation: changeId
+            ? this.raw
+                .prepare(
+                  'SELECT o.id FROM output_observations o JOIN change_outputs c ON c.id=o.outputId WHERE c.workId=? ORDER BY o.rowid DESC LIMIT 1',
+                )
+                .get(changeId)
+            : null,
+        }),
+      ),
       project: clip(project, 500),
       stream: stream
         ? {

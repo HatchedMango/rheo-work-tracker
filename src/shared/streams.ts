@@ -2,7 +2,7 @@ import { requestGuidanceSchema, type RequestGuidance } from './request-guidance.
 import { z } from 'zod';
 import { conversationUrlSchema } from './conversation-schema.js';
 import { referenceSchema } from './contracts.js';
-export const WORKFLOW_VERSION = '1.8.0';
+export const WORKFLOW_VERSION = '1.9.0';
 export const streamScopeSchema = z.object({
   title: z.string().trim().min(1).max(180),
   outcome: z.string().trim().min(1).max(8000),
@@ -279,7 +279,7 @@ export const workflowCapabilities = {
   },
   checkpoint: { tool: 'sync_work', fallback: 'local workflow checkpoint helper' },
   helperOperations: {
-    commands: ['review', 'begin', 'lease', 'checkpoint', 'evidence'],
+    commands: ['bind', 'unbind', 'select', 'review', 'begin', 'lease', 'checkpoint', 'evidence'],
     agentDependencyJudgmentRequired: true,
     lowLevelApisRetained: true,
   },

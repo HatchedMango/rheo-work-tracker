@@ -20,7 +20,7 @@ WORK_INBOX_DATA_DIR='/absolute/application/data' node dist/cli/index.js sync-fee
 
 ## Lifecycle adapters
 
-Run the existing conflict-aware workflow setup from Connections. Both Codex and Claude Code get `SessionStart`, `UserPromptSubmit`, and `Stop` command hooks; Codex also gets `Interrupt`. Session startup/resume/compaction loads bounded context for the explicit selection. The first prompt also recovers full bounded context if startup delivery was missed. Later prompt hooks use a compact refresh (at most 8 KB): selected goal/progress, plan revisions, assessment state, current claim, and a bounded set of open questions/actions. It is explicitly incomplete, not a dependency review; retrieve full context/pages after relevant drift. Startup/resume/compaction always recover full bounded context, with the latest saved checkpoint. Stop checks for a saved checkpoint; a missing checkpoint can request one continuation. A private durable marker suppresses repeats across process restarts, new continuation turns, resume and compaction until a checkpoint is recorded, even when the client omits its repeat flag. Stop checks and conflicts are scoped to the native session; another chat’s pending writes do not trigger its reminder. Interrupt queues its event durably, uses a short network budget and a supported three-second Codex timeout, and never prevents the interruption or restarts work.
+Run the existing conflict-aware workflow setup from Connections. Both Codex and Claude Code get `SessionStart`, `UserPromptSubmit`, and `Stop` command hooks; Codex also gets `Interrupt`. Session startup/resume/compaction loads bounded context for the explicit selection. The first prompt also recovers full bounded context if startup delivery was missed. Later prompt hooks compare a bounded compact snapshot (at most 8 KB) with the previous local snapshot and emit only changed sections: selected goal/progress, plan revisions, assessment state, current claim, and a bounded set of open questions/actions. Unchanged receipts retain the native turn and freshness cursors without resending the snapshot. If a receipt’s `base` differs from the last observed `cursor`, recover full context: saving a local baseline is not proof that a client consumed it. Full startup/resume/compaction clears the delta baseline. A semantic fingerprint detects changes outside clipped text and request lists. Refreshes are explicitly incomplete, not a dependency review; retrieve full context/pages after relevant drift. Startup/resume/compaction always recover full bounded context, with the latest saved checkpoint. Stop checks for a saved checkpoint; a missing checkpoint can request one continuation. A private durable marker suppresses repeats across process restarts, new continuation turns, resume and compaction until a checkpoint is recorded, even when the client omits its repeat flag. Stop checks and conflicts are scoped to the native session; another chat’s pending writes do not trigger its reminder. Interrupt queues its event durably, uses a short network budget and a supported three-second Codex timeout, and never prevents the interruption or restarts work.
 
 Unselected sessions stay quiet on ordinary prompts, Stop and Interrupt. Startup/resume/compaction supplies selection guidance without choosing work automatically. Selected sessions keep prompt refreshes and checkpoint recovery. Context injection after compaction uses the supported `SessionStart` hook with `source=compact`. No extra PostCompact hook is installed; a manually configured PostCompact adapter event only invalidates local context freshness for the next supported recovery hook.
 
@@ -33,6 +33,17 @@ The project manifest provides a default explicit selection. To work on another e
 ```sh
 work-inbox-workflow select --binding /PROJECT/.work-inbox/codex.json --session-id SESSION --stream-id STREAM --change-id CHANGE
 ```
+
+To explicitly associate a Git branch with work in this checkout:
+
+```sh
+work-inbox-workflow bind --binding /PROJECT/.work-inbox/codex.json --branch feature/example --stream-id STREAM --change-id CHANGE
+work-inbox-workflow unbind --binding /PROJECT/.work-inbox/codex.json --branch feature/example
+```
+
+The branch name is an exact lookup key, never a ticket parser. Canonical worktree path, project, client and credential isolate associations. The private registry lives beside session/outbox storage outside the project; Git and shared instructions are untouched. Existing different mappings require explicit removal before replacement. Bind requires available Git metadata and validates work IDs against the local service. Manual chat selection takes precedence, followed by a matching branch binding, then the explicit project default. An unmatched branch does not create work. A detached HEAD has no branch match; invalid/unavailable registry metadata never invents a selection. Private registry/history survives project setup removal, like existing outbox history.
+
+Use `select --binding BINDING --session-id SESSION --use-binding true` to clear a chat override and return to the recorded branch/project selection. A changed branch selection invalidates cached context. Refresh before checkpointing; a delayed write keeps its original selection and server-side conflicts remain in force. Helpers use the same selection rules. `context --binding BINDING --session-id SESSION` also honors a chat override.
 
 Selection loads fresh context, clears that session's old checkpoint freshness, and grants no approval. Delayed writes for an older selection conflict rather than land on the newly selected work. Do not infer a selection from the project path.
 
@@ -77,7 +88,14 @@ If a current chat has an older MCP tool catalog, save the checkpoint object in a
 work-inbox-workflow checkpoint --binding /PROJECT/.work-inbox/codex.json --input /PRIVATE/checkpoint.json --session-id SESSION
 ```
 
-For source use, replace `work-inbox-workflow` with `node dist/workflow/index.js`. A minimal input is `{"summary":"Approach reviewed; implementation has not started."}`. A progress update also needs `change: {revision, progress, note}` for the selected change. Never reuse a human work revision for its tracking revision. Check `recorded`, `pending` and `conflicts` in the result; queued or rejected is not synchronized.
+For source use, replace `work-inbox-workflow` with `node dist/workflow/index.js`. A minimal input is `{"summary":"Approach reviewed; implementation has not started."}`. A progress update also needs `change: {revision, progress, note}` for the selected change. For a simple update, avoid a temporary JSON file:
+
+```sh
+work-inbox-workflow checkpoint --binding BINDING --session-id SESSION --summary 'Recorded the useful result.'
+work-inbox-workflow checkpoint --binding BINDING --session-id SESSION --summary 'Implementation started.' --progress working --revision REVISION
+```
+
+The revision remains explicit; this shortcut does not fetch a newer revision to make a stale update pass. `--note` optionally supplies a separate progress note. Complex feedback/findings keep the existing `--input` format. Both paths use the same durable outbox and receipts. Never reuse a human work revision for its tracking revision. Check `recorded`, `pending` and `conflicts` in the result; queued or rejected is not synchronized.
 
 ## Optional convenience operations (workflow 1.7)
 

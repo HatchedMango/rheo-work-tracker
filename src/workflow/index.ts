@@ -8,11 +8,16 @@ import { WORKFLOW_VERSION } from '../shared/streams.js';
 import {
   runHook,
   saveCheckpoint,
+  saveCheckpointValue,
   checkpointFile,
   selectWork,
   setStopPolicy,
   setProjectStopPolicy,
+  useWorkBinding,
 } from './hooks.js';
+import { bindWork } from './work-bindings.js';
+import { resolveWorkSelection } from './work-bindings.js';
+import { readSession } from './session-state.js';
 import { SyncOutbox } from './outbox.js';
 import { reviewWork, beginWork, updateWorkLease, outputEvidence } from './operations.js';
 export async function runWorkflow(argv: string[]) {
@@ -77,19 +82,77 @@ export async function runWorkflow(argv: string[]) {
     const f = z
       .object({
         binding: z.string().min(1),
-        input: z.string().min(1),
+        input: z.string().min(1).optional(),
+        summary: z.string().trim().min(1).max(3000).optional(),
+        progress: z.enum(['planned', 'working', 'blocked', 'review', 'delivered']).optional(),
+        revision: z.coerce.number().int().positive().optional(),
+        note: z.string().trim().min(1).max(3000).optional(),
         'session-id': z.string().min(1).optional(),
       })
       .strict()
       .parse(flags);
-    const result = f['session-id']
-      ? await saveCheckpoint(f.binding, f.input, f['session-id'])
-      : await checkpointFile(f.binding, f.input);
+    if (f.input && (f.summary || f.progress || f.revision || f.note))
+      throw new Error('Use either --input or direct checkpoint fields.');
+    if (!f.input && !f.summary) throw new Error('Pass --input or an explicit --summary.');
+    if (!!f.progress !== !!f.revision || (f.note && !f.progress))
+      throw new Error(
+        'Explicit progress requires its exact --revision; --note belongs to a progress update.',
+      );
+    const sessionId =
+      f['session-id'] || process.env.CODEX_THREAD_ID || process.env.CLAUDE_SESSION_ID;
+    const result = f.input
+      ? sessionId
+        ? await saveCheckpoint(f.binding, f.input, sessionId)
+        : await checkpointFile(f.binding, f.input)
+      : sessionId
+        ? await saveCheckpointValue(
+            f.binding,
+            {
+              summary: f.summary,
+              ...(f.progress
+                ? {
+                    change: {
+                      revision: f.revision!,
+                      progress: f.progress,
+                      note: f.note ?? f.summary!,
+                    },
+                  }
+                : {}),
+            },
+            sessionId,
+          )
+        : (() => {
+            throw new Error('Pass the native --session-id from lifecycle context.');
+          })();
     return JSON.stringify({
       recorded: result.pending === 0 && !result.conflicts.length && !result.busy,
       pending: result.pending,
       conflicts: result.conflicts,
     });
+  }
+  if (command === 'bind' || command === 'unbind') {
+    const f = z
+      .object({
+        binding: z.string().min(1),
+        branch: z.string().min(1).max(300),
+        'stream-id': z.uuid().optional(),
+        'change-id': z.uuid().optional(),
+      })
+      .strict()
+      .parse(flags);
+    if (command === 'unbind' && (f['stream-id'] || f['change-id']))
+      throw new Error('Unbind takes only the exact branch name.');
+    const binding = bindingSchema.parse(JSON.parse(readFileSync(f.binding, 'utf8')));
+    if (binding.version !== WORKFLOW_VERSION)
+      throw new Error('Update the installed workflow first.');
+    return JSON.stringify(
+      await bindWork(
+        binding,
+        new SyncOutbox(binding.credentialFile, binding.project, binding.client),
+        f.branch,
+        command === 'bind' ? { streamId: f['stream-id'], changeId: f['change-id'] } : undefined,
+      ),
+    );
   }
   if (command === 'mode') {
     const f = z
@@ -115,9 +178,15 @@ export async function runWorkflow(argv: string[]) {
         'session-id': z.string().min(1).max(200),
         'stream-id': z.uuid().optional(),
         'change-id': z.uuid().optional(),
+        'use-binding': z.literal('true').optional(),
       })
       .strict()
       .parse(flags);
+    if (f['use-binding']) {
+      if (f['stream-id'] || f['change-id'])
+        throw new Error('Use a recorded binding or explicit IDs, not both.');
+      return JSON.stringify(await useWorkBinding(f.binding, f['session-id']));
+    }
     return JSON.stringify(
       await selectWork(f.binding, f['session-id'], {
         streamId: f['stream-id'],
@@ -151,19 +220,25 @@ export async function runWorkflow(argv: string[]) {
     });
   }
   if (command === 'context') {
-    const { binding: bindingPath } = z
-      .object({ binding: z.string().min(1) })
+    const { binding: bindingPath, 'session-id': sessionId } = z
+      .object({ binding: z.string().min(1), 'session-id': z.string().min(1).max(200).optional() })
       .strict()
       .parse(flags);
     try {
       const binding = bindingSchema.parse(JSON.parse(readFileSync(bindingPath, 'utf8')));
       if (binding.version !== WORKFLOW_VERSION)
         throw new Error('The installed workflow is stale; run setup check/update.');
+      const outbox = new SyncOutbox(binding.credentialFile, binding.project, binding.client);
+      const workBinding = resolveWorkSelection(
+        binding,
+        outbox,
+        sessionId ? readSession(outbox, sessionId) : {},
+      );
       const query = new URLSearchParams({
         project: binding.project,
         limit: '6',
-        ...(binding.changeId ? { changeId: binding.changeId } : {}),
-        ...(binding.streamId ? { streamId: binding.streamId } : {}),
+        ...(workBinding.selected.changeId ? { changeId: workBinding.selected.changeId } : {}),
+        ...(workBinding.selected.streamId ? { streamId: workBinding.selected.streamId } : {}),
       });
       const request = apiClient(readCredential(binding.credentialFile), { timeoutMs: 2500 });
       const context = await request(`/api/context?${query}`);
