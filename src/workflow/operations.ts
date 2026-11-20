@@ -230,7 +230,11 @@ async function beginWorkOnce(bindingPath: string, sessionId: string, input: unkn
     throw new Error('Selection changed during claiming; the old selection claim was released.');
   }
   await withSession(outbox, sessionId, (state) => {
-    if (state.begin?.reportId === intent.reportId) state.begin.claimId = result.claim.id;
+    if (state.begin?.reportId === intent.reportId) {
+      state.begin.claimId = result.claim.id;
+      state.begin.expiresAt = result.claim.expiresAt;
+      state.pendingIntent = 'working';
+    }
   });
   // The cooperative credential remains exclusively in private helper storage.
   return { claim: result.claim, authority: 'Coordination only; client permissions still apply.' };
@@ -266,15 +270,16 @@ async function updateLeaseOnce(bindingPath: string, sessionId: string, release: 
       throw new Error('No acknowledged helper claim; replay begin after an uncertain response.');
     intent.claimId = current.tracking.claim.id;
   }
-  const result = await request(`/api/claims/${intent.claimId}`, {
+  const result = await request<{ claim: Claim }>(`/api/claims/${intent.claimId}`, {
     sessionId: intent.sessionId,
     token: intent.token,
     ...(release ? { release: true } : { leaseSeconds: 1800 }),
   });
-  if (release)
-    await withSession(outbox, sessionId, (state) => {
-      if (state.begin?.reportId === intent.reportId) delete state.begin;
-    });
+  await withSession(outbox, sessionId, (state) => {
+    if (state.begin?.reportId !== intent.reportId) return;
+    if (release) delete state.begin;
+    else state.begin!.expiresAt = result.claim.expiresAt;
+  });
   return result;
 }
 export async function outputEvidence(bindingPath: string, sessionId: string, outputId?: string) {
@@ -287,5 +292,74 @@ export async function outputEvidence(bindingPath: string, sessionId: string, out
   if (!output) throw new Error('Output is not in the selected change’s current output page.');
   return request(`/api/work/${selected.changeId}/outputs/${output.id}/observe`, {
     revision: output.revision,
+  });
+}
+
+// Only acknowledged helper-owned claims are maintained, on actual participation.
+export async function maintainWorkLease(bindingPath: string, sessionId: string) {
+  const { outbox, selected, request } = connection(bindingPath, sessionId, true, 600);
+  const state = readSession(outbox, sessionId),
+    owned = state.begin;
+  if (
+    !owned?.claimId ||
+    owned.changeId !== selected.changeId ||
+    (state.intent === 'reading' && state.pendingIntent !== 'working')
+  )
+    return undefined;
+  if (owned.expiresAt && owned.expiresAt - Date.now() > 300_000) return undefined;
+  if ((state.maintenanceAfter ?? 0) > Date.now()) return undefined;
+  return withSession(outbox, 'operation-' + hash(sessionId), async () => {
+    const latest = readSession(outbox, sessionId);
+    if (
+      latest.begin?.claimId !== owned.claimId ||
+      resolveWorkSelection(
+        bindingSchema.parse(JSON.parse(readFileSync(bindingPath, 'utf8'))),
+        outbox,
+        latest,
+      ).selected.changeId !== owned.changeId
+    )
+      return undefined;
+    try {
+      const work = await request<{ tracking: { claim: Claim | null } }>(
+        `/api/work/${owned.changeId}`,
+      );
+      const claim = work.tracking.claim;
+      if (
+        !claim ||
+        claim.id !== owned.claimId ||
+        claim.sessionId !== owned.sessionId ||
+        claim.state !== 'active' ||
+        claim.expiresAt <= Date.now()
+      )
+        return 'inactive';
+      if (claim.expiresAt - Date.now() > 300_000) {
+        await withSession(outbox, sessionId, (s) => {
+          if (s.begin?.claimId === claim.id) s.begin.expiresAt = claim.expiresAt;
+        });
+        return undefined;
+      }
+      if (
+        resolveWorkSelection(
+          bindingSchema.parse(JSON.parse(readFileSync(bindingPath, 'utf8'))),
+          outbox,
+          readSession(outbox, sessionId),
+        ).selected.changeId !== owned.changeId
+      )
+        return undefined;
+      const result = await request<{ claim: Claim }>(`/api/claims/${claim.id}`, {
+        sessionId: owned.sessionId,
+        token: owned.token,
+        leaseSeconds: 1800,
+      });
+      await withSession(outbox, sessionId, (s) => {
+        if (s.begin?.claimId === claim.id) s.begin.expiresAt = result.claim.expiresAt;
+      });
+      return 'renewed';
+    } catch {
+      await withSession(outbox, sessionId, (s) => {
+        s.maintenanceAfter = Date.now() + 60_000;
+      });
+      return 'not renewed; review readiness or connection before continuing implementation';
+    }
   });
 }

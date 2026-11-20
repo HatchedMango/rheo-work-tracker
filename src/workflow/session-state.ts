@@ -3,12 +3,18 @@ import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { hash } from '../services/auth.js';
 import { privateDirectory, privateWrite, type SyncOutbox } from './outbox.js';
+export type SessionIntent = 'reading' | 'working';
 export type StopPolicy = 'checkpoint-once' | 'observe';
 export type SessionState = {
   turnId?: string;
   occurredAt?: number;
   selected?: { streamId?: string; changeId?: string };
   stopPolicy?: StopPolicy;
+  intent?: SessionIntent;
+  intentInitialized?: boolean;
+  pendingIntent?: SessionIntent;
+  recoveryPrompts?: number;
+  maintenanceAfter?: number;
   fullContextLoaded?: boolean;
   selectionKey?: string;
   refresh?: Record<string, string>;
@@ -21,6 +27,7 @@ export type SessionState = {
     token: string;
     changeId: string;
     claimId?: string;
+    expiresAt?: number;
   };
 };
 // Separate private files prevent unrelated chats from overwriting each other.

@@ -319,7 +319,7 @@ describe('worker reliability and authorization', () => {
           ?.snapshot.title,
       ).toBe('Durable');
       expect(disk.raw.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({
-        n: 15,
+        n: 16,
       });
       disk.close();
     } finally {

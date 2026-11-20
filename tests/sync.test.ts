@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openStore } from '../src/db/index.js';
 import { WorkService } from '../src/services/work.js';
@@ -449,4 +452,115 @@ it('paginates session history deterministically, scopes agent reads and keeps di
   expect(() => sync.workSessions(owner, { streamId: s.id, changeId: randomUUID() })).toThrow(
     'Select one',
   );
+});
+
+it('keeps reading out of work history while preserving intent, atomic promotion and legacy working behavior', () => {
+  const s = stream();
+  sync.event(agent, event(s.id, 'start', { intent: 'reading' }));
+  sync.event(agent, event(s.id, 'prompt'));
+  expect(sync.session(agent, 'native-session')).toMatchObject({
+    intent: 'reading',
+    needsCheckpoint: 0,
+  });
+  expect(sync.workSessions(agent, { streamId: s.id }).items).toHaveLength(0);
+  const cp = event(s.id, 'checkpoint', { checkpoint: { summary: 'Actual tracked result' } });
+  sync.event(agent, cp);
+  expect(sync.session(agent, 'native-session')).toMatchObject({
+    intent: 'working',
+    needsCheckpoint: 0,
+  });
+  expect(sync.workSessions(agent, { streamId: s.id }).items).toHaveLength(1);
+  sync.event(agent, event(s.id, 'prompt'));
+  expect(() => sync.event(agent, event(s.id, 'start', { intent: 'reading' }))).toThrow(
+    'outstanding',
+  );
+  expect(sync.session(agent, 'native-session')).toMatchObject({
+    intent: 'working',
+    needsCheckpoint: 1,
+  });
+  sync.event(agent, event(s.id, 'checkpoint', { checkpoint: { summary: 'Saved' } }));
+  sync.event(agent, event(s.id, 'start', { intent: 'reading' }));
+  sync.event(agent, event(s.id, 'prompt'));
+  expect(sync.session(agent, 'native-session')).toMatchObject({
+    intent: 'reading',
+    needsCheckpoint: 0,
+  });
+  expect(sync.workSessions(agent, { streamId: s.id }).items).toHaveLength(1);
+  sync.event(agent, event(s.id, 'start', { sessionId: 'legacy' }));
+  expect(sync.session(agent, 'legacy')).toMatchObject({ intent: 'working', needsCheckpoint: 1 });
+  expect(store.raw.prepare('SELECT count(*) n FROM change_completions').get()).toEqual({ n: 0 });
+});
+
+it('applies default intent only to a new server session, including after local-state loss', () => {
+  const s = stream();
+  sync.event(agent, event(s.id, 'start', { defaultIntent: 'reading' }));
+  expect(sync.session(agent, 'native-session')?.intent).toBe('reading');
+  sync.event(agent, event(s.id, 'checkpoint', { checkpoint: { summary: 'Tracked work' } }));
+  sync.event(agent, event(s.id, 'start', { defaultIntent: 'reading' }));
+  expect(sync.session(agent, 'native-session')).toMatchObject({
+    intent: 'working',
+    needsCheckpoint: 1,
+  });
+});
+
+it('requires a checkpoint when working intent first arrives at Stop', () => {
+  const s = stream();
+  sync.event(agent, event(s.id, 'start', { defaultIntent: 'reading' }));
+  const stopped = sync.event(agent, event(s.id, 'stop', { intent: 'working' }));
+  expect(stopped.session).toMatchObject({ intent: 'working', needsCheckpoint: 1 });
+});
+
+it('upgrades existing session rows to working without losing history or receipts', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rheo-intent-migration-')),
+    path = join(dir, 'fixture.sqlite');
+  let disk = openStore(path);
+  try {
+    const w = new WorkService(disk),
+      streams = new StreamService(w),
+      sync = new SyncService(new OversightService(streams)),
+      auth = new Auth(disk);
+    const secret = auth.register('agent', 'Migration fixture').secret,
+      a = auth.actor(secret, 'bearer');
+    const s = streams.submit(a, {
+      title: 'Preserve history',
+      outcome: 'Keep prior work',
+      idempotencyKey: randomUUID(),
+    });
+    const base = {
+      streamId: s.id,
+      sessionId: 'legacy-session',
+      client: 'codex' as const,
+      project: '/fixture',
+      turnId: 'one',
+    };
+    sync.event(a, { ...base, eventId: randomUUID(), event: 'start', occurredAt: Date.now() });
+    sync.event(a, {
+      ...base,
+      eventId: randomUUID(),
+      event: 'checkpoint',
+      occurredAt: Date.now() + 1,
+      checkpoint: { summary: 'Prior handoff' },
+    });
+    const history = disk.raw.prepare('SELECT * FROM session_work').all(),
+      receipts = disk.raw.prepare('SELECT * FROM workflow_receipts ORDER BY eventId').all();
+    // Reconstruct the previous schema, then exercise the real restart migration.
+    disk.raw.exec('ALTER TABLE workflow_sessions DROP COLUMN intent');
+    disk.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0016_session_intent.sql');
+    disk.close();
+    disk = openStore(path);
+    const upgraded = new SyncService(
+      new OversightService(new StreamService(new WorkService(disk))),
+    );
+    expect(
+      upgraded.session(new Auth(disk).actor(secret, 'bearer'), 'legacy-session'),
+    ).toMatchObject({ intent: 'working', needsCheckpoint: 0, summary: 'Prior handoff' });
+    expect(disk.raw.prepare('SELECT * FROM session_work').all()).toEqual(history);
+    expect(disk.raw.prepare('SELECT * FROM workflow_receipts ORDER BY eventId').all()).toEqual(
+      receipts,
+    );
+    expect(disk.raw.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    disk.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

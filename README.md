@@ -47,7 +47,7 @@ See [storage and packaging](docs/desktop.md), [backup and restore](docs/second-m
 
 ## Develop
 
-Unreleased workflow 1.9 updates add explicit branch bindings, change-only context refreshes, simpler checkpoints, personal setup, project checkpoint preferences, optional review/begin/lease helpers, Keychain-managed GitLab access, and [read-only GitLab evidence](docs/output-evidence.md). The published 0.9.1 installer above retains its release-time behavior. See the [implementation plan and invariants](docs/work-adoption-plan.md).
+Unreleased workflow 1.10 updates add reading/working session intent, safe linked-worktree attachment, automatic context recovery and owned-lease maintenance, explicit branch bindings, simpler checkpoints, personal setup, project checkpoint preferences, optional review/begin/lease helpers, Keychain-managed GitLab access, and [read-only GitLab evidence](docs/output-evidence.md). The published 0.9.1 installer above retains its release-time behavior. See the [implementation plan and invariants](docs/work-adoption-plan.md).
 
 Use Node **22.18.0** from `.nvmrc` and npm. Mac source builds also require Xcode Command Line Tools for the native Keychain bridge; SQLite includes a native component.
 

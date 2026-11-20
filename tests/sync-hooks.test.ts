@@ -26,7 +26,10 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   vi.unstubAllEnvs();
 });
-async function fixture(client: 'codex' | 'claude-code' = 'codex') {
+async function fixture(
+  client: 'codex' | 'claude-code' = 'codex',
+  intent: 'reading' | 'working' = 'working',
+) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'work-inbox-sync-')));
   dirs.push(dir);
   vi.stubEnv('WORK_INBOX_SYNC_HOME', join(dir, 'private-sync'));
@@ -52,6 +55,7 @@ async function fixture(client: 'codex' | 'claude-code' = 'codex') {
     credentialFile,
     helper: join(dir, 'helper'),
     serverName: 'fixture',
+    defaultIntent: intent,
     streamId: stream.id,
   });
   const binding = join(dir, `.work-inbox/${client}.json`);
@@ -532,60 +536,90 @@ it('persists project checkpoint preferences across sessions and setup while hono
   }
 });
 
-it('sends minimal unchanged refreshes, detects clipped changes and forces full recovery after compaction', async () => {
+it('supplies current facts and recovers hidden changes and lost context without agent hash bookkeeping', async () => {
   const f = await fixture();
   try {
     await f.app.listen({ port: f.port, host: '127.0.0.1' });
-    const input = { session_id: 'delta-chat', hook_event_name: 'UserPromptSubmit' };
+    const input = { session_id: 'refresh-chat', hook_event_name: 'UserPromptSubmit' };
+    const context = async (turn: string) =>
+      (await runHook(f.binding, { ...input, turn_id: turn })).hookSpecificOutput!.additionalContext;
+    const parse = (s: string) => JSON.parse(s.split('\n')[1]);
     await runHook(f.binding, { ...input, hook_event_name: 'SessionStart', source: 'startup' });
-    const first = (await runHook(f.binding, { ...input, turn_id: 'one' })).hookSpecificOutput!
-      .additionalContext;
-    const unchanged = (await runHook(f.binding, { ...input, turn_id: 'two' })).hookSpecificOutput!
-      .additionalContext;
-    expect(first).toContain('"mode":"delta"');
-    expect(unchanged).toContain('"changed":{}');
-    expect(Buffer.byteLength(unchanged)).toBeLessThan(550);
-    const parse = (s: string) => JSON.parse(s.slice(s.indexOf('{'), s.indexOf('\n')));
-    expect(parse(unchanged).base).toBe(parse(first).cursor);
+    expect(parse(await context('one')).mode).toBe('refresh');
+    const unchanged = await context('two');
+    expect(parse(unchanged)).toMatchObject({
+      mode: 'refresh',
+      current: { stream: { id: f.stream.id } },
+    });
+    expect(Buffer.byteLength(unchanged)).toBeLessThan(3000);
+    expect(unchanged).not.toMatch(/"cursor"|"base"|"freshness"|last cursor/);
     f.streams.recordContext(f.agent, f.stream.id, {
       kind: 'decision',
       body: 'A new decision outside the compact request list.',
       idempotencyKey: randomUUID(),
     });
-    const decision = parse(
-      (await runHook(f.binding, { ...input, turn_id: 'decision' })).hookSpecificOutput!
-        .additionalContext,
-    );
-    expect(decision.changed).toHaveProperty('freshness');
-    expect(decision.cursor).not.toBe(parse(unchanged).cursor);
+    const changed = await context('decision');
+    expect(parse(changed).mode).toBe('recovered');
+    expect(changed).toContain('A new decision outside');
     const current = f.streams.get(f.agent, f.stream.id);
     f.streams.update(f.agent, current.id, {
       revision: current.revision,
-      context: 'A retained decision beyond the compact fields.',
+      context: 'A retained decision beyond compact fields.',
     });
-    const changed = (await runHook(f.binding, { ...input, turn_id: 'three' })).hookSpecificOutput!
-      .additionalContext;
-    expect(parse(changed).changed).toHaveProperty('freshness');
-    expect(parse(changed).cursor).not.toBe(parse(unchanged).cursor);
-    expect(
-      f.sync.list({ id: 'owner', scope: 'owner', ownerId: 'owner' }).items[0].needsCheckpoint,
-    ).toBe(1);
+    expect(await context('three')).toContain('A retained decision');
+    // No delivery acknowledgement exists: periodic recovery bounds a lost unchanged injection.
+    for (let i = 0; i < 7; i++) expect(parse(await context('periodic-' + i)).mode).toBe('refresh');
+    expect(parse(await context('periodic-full')).mode).toBe('recovered');
     const full = (
       await runHook(f.binding, {
         ...input,
         hook_event_name: 'SessionStart',
         source: 'compact',
-        turn_id: 'three',
+        turn_id: 'compact',
       })
     ).hookSpecificOutput!.additionalContext;
-    expect(full).not.toContain('"mode":"delta"');
     expect(full).toContain('A retained decision');
-    const recovered = parse(
-      (await runHook(f.binding, { ...input, turn_id: 'four' })).hookSpecificOutput!
-        .additionalContext,
+    expect(parse(await context('after-compact')).mode).toBe('refresh');
+  } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+it('keeps reading quiet through offline replay, promotes actual checkpoints and refuses to discard outstanding work', async () => {
+  const f = await fixture('claude-code', 'reading');
+  try {
+    const { setSessionIntent, saveCheckpointValue } = await import('../src/workflow/hooks.js');
+    const input = { session_id: 'reading-chat', hook_event_name: 'SessionStart' };
+    await runHook(f.binding, input); // durably queued while offline
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    const started = await runHook(f.binding, { ...input, source: 'resume' });
+    expect(started.hookSpecificOutput!.additionalContext).toContain('Session intent: reading');
+    const history = () => f.sync.workSessions(f.agent, { streamId: f.stream.id }).items;
+    expect(history()).toHaveLength(0);
+    expect(await runHook(f.binding, { ...input, hook_event_name: 'Stop' })).toEqual({});
+    await saveCheckpointValue(f.binding, { summary: 'Saved actual work.' }, input.session_id);
+    expect(history()).toHaveLength(1);
+    await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' });
+    expect(f.sync.session(f.agent, input.session_id)?.intent).toBe('working');
+    await expect(setSessionIntent(f.binding, input.session_id, 'reading')).rejects.toThrow(
+      'outstanding',
     );
-    expect(recovered.base).toBeNull();
-    expect(recovered.changed).toHaveProperty('stream');
+    await saveCheckpointValue(f.binding, { summary: 'Saved next step.' }, input.session_id);
+    await setSessionIntent(f.binding, input.session_id, 'reading');
+    const before = history()[0].lastSeenAt;
+    await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' });
+    expect(await runHook(f.binding, { ...input, hook_event_name: 'Stop' })).toEqual({});
+    expect(history()[0].lastSeenAt).toBe(before);
+    expect(history()[0].selected).toBe(false);
+    await setSessionIntent(f.binding, input.session_id, 'working');
+    expect(f.sync.session(f.agent, input.session_id)).toMatchObject({
+      intent: 'working',
+      needsCheckpoint: 1,
+    });
+    expect(f.store.raw.prepare('SELECT count(*) n FROM change_completions').get()).toEqual({
+      n: 0,
+    });
   } finally {
     await f.app.close();
     f.store.close();
@@ -648,6 +682,60 @@ it('submits direct checkpoints through the existing outbox and keeps stale revis
       n: 0,
     });
   } finally {
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+it('does not advance refresh state after a failed recovery or emit a response for a changed selection', async () => {
+  const f = await fixture();
+  try {
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    const input = { session_id: 'recovery-failure', hook_event_name: 'SessionStart' };
+    await runHook(f.binding, input);
+    const outbox = new SyncOutbox(f.credentialFile, f.dir, 'codex');
+    await withSession(outbox, input.session_id, (s) => {
+      delete s.refresh;
+    });
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+      if (String(args[0]).includes('/api/context?')) throw new Error('lost recovery');
+      return original(...args);
+    });
+    const failed = await runHook(f.binding, {
+      ...input,
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'retry',
+    });
+    expect(failed).toHaveProperty(
+      'systemMessage',
+      expect.stringContaining('context recovery failed'),
+    );
+    expect(readSession(outbox, input.session_id).refresh).toBeUndefined();
+    vi.unstubAllGlobals();
+    const recovered = await runHook(f.binding, {
+      ...input,
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'retry-two',
+    });
+    expect(recovered.hookSpecificOutput!.additionalContext).toContain('"mode":"recovered"');
+    await withSession(outbox, input.session_id, (s) => {
+      delete s.refresh;
+    });
+    vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+      const response = await original(...args);
+      if (String(args[0]).includes('/api/context?'))
+        await withSession(outbox, input.session_id, (s) => {
+          s.selected = { streamId: randomUUID() };
+        });
+      return response;
+    });
+    expect(
+      await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit', turn_id: 'drift' }),
+    ).toEqual({});
+    expect(readSession(outbox, input.session_id).refresh).toBeUndefined();
+  } finally {
+    vi.unstubAllGlobals();
     await f.app.close();
     f.store.close();
   }

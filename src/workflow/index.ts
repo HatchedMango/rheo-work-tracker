@@ -15,6 +15,8 @@ import {
   setProjectStopPolicy,
   useWorkBinding,
 } from './hooks.js';
+import { attachWorktree } from './attach.js';
+import { setSessionIntent } from './hooks.js';
 import { bindWork } from './work-bindings.js';
 import { resolveWorkSelection } from './work-bindings.js';
 import { readSession } from './session-state.js';
@@ -154,22 +156,43 @@ export async function runWorkflow(argv: string[]) {
       ),
     );
   }
+  if (command === 'attach') {
+    const f = z
+      .object({
+        binding: z.string().min(1),
+        project: z.string().min(1),
+        operation: z.enum(['preview', 'install']).default('preview'),
+      })
+      .strict()
+      .parse(flags);
+    return JSON.stringify(attachWorktree(f.binding, f.project, f.operation));
+  }
   if (command === 'mode') {
     const f = z
       .object({
         binding: z.string().min(1),
         'session-id': z.string().min(1).max(200).optional(),
         scope: z.enum(['session', 'project']).default('session'),
-        'stop-policy': z.enum(['checkpoint-once', 'observe']),
+        'stop-policy': z.enum(['checkpoint-once', 'observe']).optional(),
+        intent: z.enum(['reading', 'working']).optional(),
       })
       .strict()
       .parse(flags);
+    if (!f['stop-policy'] && !f.intent) throw new Error('Pass --intent or --stop-policy.');
     if (f.scope === 'project') {
+      if (f.intent)
+        throw new Error(
+          'Use install --default-intent with the setup arguments for future sessions.',
+        );
       if (f['session-id']) throw new Error('Project mode does not take a session ID.');
-      return JSON.stringify(setProjectStopPolicy(f.binding, f['stop-policy']));
+      return JSON.stringify(setProjectStopPolicy(f.binding, f['stop-policy']!));
     }
     if (!f['session-id']) throw new Error('Session mode requires --session-id.');
-    return JSON.stringify(await setStopPolicy(f.binding, f['session-id'], f['stop-policy']));
+    const result = f.intent ? await setSessionIntent(f.binding, f['session-id'], f.intent) : {};
+    const policy = f['stop-policy']
+      ? await setStopPolicy(f.binding, f['session-id'], f['stop-policy'])
+      : {};
+    return JSON.stringify({ ...result, ...policy });
   }
   if (command === 'select') {
     const f = z
@@ -260,6 +283,7 @@ export async function runWorkflow(argv: string[]) {
       'change-id': z.uuid().optional(),
       scope: z.enum(['personal', 'project']).optional(),
       'stop-policy': z.enum(['checkpoint-once', 'observe']).optional(),
+      'default-intent': z.enum(['reading', 'working']).optional(),
     })
     .strict()
     .parse(flags);
@@ -275,6 +299,7 @@ export async function runWorkflow(argv: string[]) {
       changeId: f['change-id'],
       scope: f.scope,
       stopPolicy: f['stop-policy'],
+      defaultIntent: f['default-intent'],
     }),
     null,
     2,

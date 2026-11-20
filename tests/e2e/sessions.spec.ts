@@ -116,3 +116,50 @@ test('finds session handoffs on changes and streams with pagination and safe ret
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/integrated-chats-mobile.png', fullPage: true });
 });
+
+test('reading context does not imply saved progress or add a work chat link', async ({ page }) => {
+  const config = JSON.parse(readFileSync('.data/e2e/agent.json', 'utf8'));
+  const post = async (path: string, body: unknown) => {
+    const r = await fetch(config.url + '/api' + path, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(r.ok).toBeTruthy();
+    return r.json();
+  };
+  const stream = await post('/streams', {
+    title: 'Read context quietly',
+    outcome: 'Review context',
+    idempotencyKey: randomUUID(),
+  });
+  const change = await post('/work', {
+    title: 'Unstarted work',
+    objective: 'A future output',
+    streamId: stream.id,
+    idempotencyKey: randomUUID(),
+  });
+  await post('/sync/events', {
+    streamId: stream.id,
+    changeId: change.id,
+    client: 'claude-code',
+    sessionId: randomUUID(),
+    project: '/fixture',
+    turnId: 'one',
+    eventId: randomUUID(),
+    event: 'start',
+    occurredAt: Date.now(),
+    defaultIntent: 'reading',
+  });
+  await page.goto(`/?view=streams&stream=${stream.id}`);
+  await page.getByText('Details & history', { exact: true }).click();
+  await expect(page.locator('.sync-summary > summary')).toHaveText('Context received');
+  await page.locator('.sync-summary > summary').click();
+  await expect(page.locator('.sync-summary')).toContainText('Reading context');
+  await expect(page.locator('.sync-summary')).not.toContainText('1970');
+  await expect(
+    page
+      .locator(`[data-map-card="${change.id}"]`)
+      .getByRole('button', { name: /Copy Claude session ID/ }),
+  ).toHaveCount(0);
+});

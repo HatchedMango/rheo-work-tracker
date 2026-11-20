@@ -362,6 +362,7 @@ try {
   const installed = JSON.parse(await workflow(['install', ...workflowArgs]));
   assert(installed.current);
   assert.equal(installed.scope, 'personal');
+  assert.equal(installed.defaultIntent, 'reading');
   assert.equal(
     readFileSync(join(project, 'CLAUDE.md'), 'utf8'),
     '# Existing project instructions\n',
@@ -405,6 +406,48 @@ try {
   assert(startHook.hookSpecificOutput.additionalContext.includes(fixtureStream.outcome));
   assert(startHook.hookSpecificOutput.additionalContext.includes('Use the work-inbox skill'));
   assert(startHook.hookSpecificOutput.additionalContext.includes('"source":"branch"'));
+  const readingStop = JSON.parse(
+    await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
+  );
+  assert.deepEqual(readingStop, {});
+  await workflow([
+    'mode',
+    '--binding',
+    binding,
+    '--session-id',
+    session.session_id,
+    '--intent',
+    'working',
+  ]);
+  execFileSync(
+    '/usr/bin/git',
+    [
+      '-C',
+      project,
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.com',
+      'commit',
+      '--allow-empty',
+      '-qm',
+      'Fixture',
+    ],
+    { stdio: 'pipe' },
+  );
+  const linked = join(temporary, 'Linked checkout');
+  execFileSync('/usr/bin/git', ['-C', project, 'worktree', 'add', '-qb', 'linked-check', linked], {
+    stdio: 'pipe',
+  });
+  const attached = JSON.parse(
+    await workflow(['attach', '--binding', binding, '--project', linked, '--operation', 'install']),
+  );
+  assert(attached.current);
+  const attachedBinding = JSON.parse(
+    readFileSync(join(linked, '.work-inbox/claude-code.json'), 'utf8'),
+  );
+  assert.equal(attachedBinding.streamId, undefined);
+  assert.equal(attachedBinding.credentialFile, migratedSetup.launch.env.WORK_INBOX_CREDENTIAL_FILE);
   const missingCheckpoint = JSON.parse(
     await workflow(['hook', '--binding', binding], { ...session, hook_event_name: 'Stop' }),
   );

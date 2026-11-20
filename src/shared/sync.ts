@@ -66,6 +66,8 @@ export const syncEventSchema = selectionSchema
     event: z.enum(['start', 'prompt', 'compact', 'stop', 'interrupt', 'checkpoint']),
     occurredAt: z.number().int().nonnegative(),
     contextMode: z.enum(['full', 'compact']).optional(),
+    intent: z.enum(['reading', 'working']).optional(),
+    defaultIntent: z.enum(['reading', 'working']).optional(),
     checkpoint: z
       .object({
         summary: z.string().trim().min(1).max(3000),
@@ -127,6 +129,7 @@ export type SyncSession = {
   lastCheckpointAt: number | null;
   checkpointTurnId: string | null;
   needsCheckpoint: number;
+  intent: 'reading' | 'working';
   summary: string;
   pendingWrites: number;
   queueReportedAt: number | null;

@@ -197,7 +197,7 @@ export class SyncService {
     // A stream shows each native session once; a change always gets its own handoff.
     const query = `WITH related AS (
       SELECT h.*,s.sessionId,s.client,s.project,
-      CASE WHEN h.streamId IS s.streamId AND h.changeId IS s.changeId THEN 1 ELSE 0 END selected,
+      CASE WHEN s.intent='working' AND h.streamId IS s.streamId AND h.changeId IS s.changeId THEN 1 ELSE 0 END selected,
       CASE WHEN c.revokedAt IS NULL AND (c.expiresAt IS NULL OR c.expiresAt>?) THEN 1 ELSE 0 END connectionActive,
       coalesce(w.title,st.title,'Selected work') title,
       ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY h.lastSeenAt DESC,h.id) rank,
@@ -310,6 +310,14 @@ export class SyncService {
       );
       const now = this.streams.now();
       ensure(p.occurredAt <= now + 60_000, 400, 'Event timestamp is in the future.');
+      const intent = p.checkpoint
+        ? 'working'
+        : (p.intent ?? session?.intent ?? p.defaultIntent ?? 'working');
+      ensure(
+        !(session?.intent === 'working' && session.needsCheckpoint && p.intent === 'reading'),
+        409,
+        'Save the outstanding work checkpoint before switching to reading.',
+      );
       if (selectionChanged) {
         this.raw
           .prepare(
@@ -442,9 +450,18 @@ export class SyncService {
       if (current) {
         this.raw
           .prepare(
-            "UPDATE workflow_sessions SET turnId=?,lastEvent=?,lastEventAt=?,needsCheckpoint=CASE WHEN ? IN ('start','prompt','compact','interrupt') THEN 1 ELSE needsCheckpoint END WHERE id=?",
+            "UPDATE workflow_sessions SET intent=?,turnId=?,lastEvent=?,lastEventAt=?,needsCheckpoint=CASE WHEN ?='reading' THEN 0 WHEN ? THEN 1 WHEN ? IN ('start','prompt','compact','interrupt') THEN 1 ELSE needsCheckpoint END WHERE id=?",
           )
-          .run(p.turnId, p.event, p.occurredAt, p.event, session.id);
+          .run(
+            intent,
+            p.turnId,
+            p.event,
+            p.occurredAt,
+            intent,
+            Number(intent === 'working' && session.intent === 'reading' && !p.checkpoint),
+            p.event,
+            session.id,
+          );
       }
       const context = ['start', 'prompt', 'compact'].includes(p.event)
         ? p.contextMode === 'compact' && p.event === 'prompt'
@@ -460,7 +477,7 @@ export class SyncService {
         this.raw
           .prepare('UPDATE workflow_sessions SET lastContextAt=? WHERE id=?')
           .run(now, session.id);
-      if (current) {
+      if (current && intent === 'working') {
         this.raw
           .prepare(
             `INSERT INTO session_work(id,workflowSessionId,selectionKey,streamId,changeId,firstSeenAt,lastSeenAt,lastEvent,summary,lastCheckpointAt)
@@ -488,7 +505,15 @@ export class SyncService {
       const result = {
         eventId: p.eventId,
         session: this.status(this.session(a, p.sessionId)!),
-        ...(context ? { context } : {}),
+        ...(context
+          ? {
+              context,
+              contextFreshness:
+                p.contextMode === 'compact' && p.event === 'prompt'
+                  ? (context as { freshness?: string }).freshness
+                  : this.compactContext(a, streamId, p.changeId, p.project).freshness,
+            }
+          : {}),
         relayFeedback: !!(
           this.raw
             .prepare('SELECT relayFeedback FROM workflow_permissions WHERE credentialId=?')

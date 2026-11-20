@@ -202,6 +202,13 @@ export async function createApp(
       z.object({ streamId: z.uuid().optional() }).parse(req.query).streamId,
     ),
   );
+  app.get('/api/sync/session/:sessionId', async (req) => {
+    const row = sync.session(
+      authenticate(req),
+      z.object({ sessionId: z.string().min(1).max(200) }).parse(req.params).sessionId,
+    );
+    return row ? sync.status(row) : null;
+  });
   app.post('/api/sync/events', async (req) =>
     sync.event(writeActor(req), syncEventSchema.parse(req.body)),
   );

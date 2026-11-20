@@ -7,10 +7,13 @@ import {
   mkdirSync,
   existsSync,
   symlinkSync,
+  realpathSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { shellQuote } from '../src/services/connections.js';
+import { attachWorktree } from '../src/workflow/attach.js';
 import { workflowSetup, type SetupOptions } from '../src/workflow/setup.js';
 let dir: string, o: SetupOptions;
 beforeEach(() => {
@@ -199,4 +202,61 @@ it('does not overwrite a modified hook or follow project symlinks', () => {
   } finally {
     rmSync(outside, { recursive: true, force: true });
   }
+});
+
+it('defaults only new installs to reading and preserves an older working default on upgrade', () => {
+  expect(workflowSetup('install', o).defaultIntent).toBe('reading');
+  const path = join(dir, '.work-inbox/codex.json');
+  const old = JSON.parse(readFileSync(path, 'utf8'));
+  delete old.defaultIntent;
+  writeFileSync(path, JSON.stringify(old));
+  expect(workflowSetup('install', o).defaultIntent).toBe('working');
+  expect(workflowSetup('install', { ...o, defaultIntent: 'reading' }).defaultIntent).toBe(
+    'reading',
+  );
+});
+it('attaches an explicit linked worktree without credentials, source selection or shared instruction edits', () => {
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.com');
+  writeFileSync(join(dir, 'CLAUDE.md'), '# Team instructions\n');
+  git('add', '.');
+  git('commit', '-qm', 'fixture');
+  const linked = join(dir, 'linked');
+  git('worktree', 'add', '-qb', 'linked', linked);
+  const unrelated = join(dir, 'other');
+  mkdirSync(unrelated);
+  execFileSync('git', ['init', '-q', unrelated]);
+  const opts = {
+    ...o,
+    client: 'claude-code' as const,
+    scope: 'personal' as const,
+    streamId: '00000000-0000-4000-8000-000000000001',
+  };
+  workflowSetup('install', opts);
+  const source = join(dir, '.work-inbox/claude-code.json');
+  expect(attachWorktree(source, linked, 'preview').installed).toBe(false);
+  expect(existsSync(join(linked, '.work-inbox'))).toBe(false);
+  expect(() => attachWorktree(source, unrelated, 'install')).toThrow('same Git');
+  expect(attachWorktree(source, linked, 'install').current).toBe(true);
+  const target = join(linked, '.work-inbox/claude-code.json');
+  const binding = JSON.parse(readFileSync(target, 'utf8'));
+  expect(binding.credentialFile).toBe(o.credentialFile);
+  expect(binding.streamId).toBeUndefined();
+  expect(binding.changeId).toBeUndefined();
+  expect(readFileSync(join(linked, 'CLAUDE.md'), 'utf8')).toBe('# Team instructions\n');
+  expect(
+    JSON.parse(readFileSync(join(linked, '.claude/settings.local.json'), 'utf8')).hooks
+      .SessionStart[0].hooks[0].command,
+  ).toContain(shellQuote(join(realpathSync(linked), '.work-inbox/claude-code.json')));
+  expect(existsSync(join(linked, 'protected.json'))).toBe(false);
+  binding.credentialFile = join(dir, 'different.json');
+  writeFileSync(target, JSON.stringify(binding));
+  expect(() => attachWorktree(source, linked, 'install')).toThrow('different connection');
+  binding.credentialFile = o.credentialFile;
+  writeFileSync(target, JSON.stringify(binding));
+  writeFileSync(join(linked, '.claude/settings.local.json'), '{}');
+  expect(() => attachWorktree(source, linked, 'install')).toThrow('No changes made');
 });

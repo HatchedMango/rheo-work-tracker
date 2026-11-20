@@ -470,6 +470,9 @@ export const workflowSessions = sqliteTable(
     lastCheckpointAt: integer(),
     checkpointTurnId: text(),
     needsCheckpoint: integer().notNull().default(1),
+    intent: text({ enum: ['reading', 'working'] })
+      .notNull()
+      .default('working'),
     summary: text().notNull().default(''),
     pendingWrites: integer().notNull().default(0),
     queueReportedAt: integer(),

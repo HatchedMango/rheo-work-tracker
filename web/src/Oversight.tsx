@@ -360,15 +360,19 @@ export function Oversight({
               <summary>
                 {detail.sync.items.some((item) => item.state === 'needs_update')
                   ? 'Chat update pending'
-                  : `Progress recorded ${when(detail.sync.items[0].lastCheckpointAt!)}`}
+                  : detail.sync.items.some((item) => item.lastCheckpointAt !== null)
+                    ? `Progress recorded ${when(Math.max(...detail.sync.items.map((item) => item.lastCheckpointAt ?? 0)))}`
+                    : 'Context received'}
               </summary>
               {detail.sync.items.map((session) => (
                 <div key={session.id} className="fine">
                   <strong>{session.client === 'codex' ? 'Codex' : 'Claude Code'}</strong>
                   {' · '}
-                  {session.lastCheckpointAt
-                    ? `Checkpoint ${when(session.lastCheckpointAt)}`
-                    : 'No checkpoint yet'}
+                  {session.intent === 'reading'
+                    ? 'Reading context'
+                    : session.lastCheckpointAt
+                      ? `Checkpoint ${when(session.lastCheckpointAt)}`
+                      : 'No checkpoint yet'}
                   {session.needsCheckpoint ? ' · Latest turn not recorded' : ''}
                   {session.pendingWrites ? ` · ${session.pendingWrites} pending at last check` : ''}
                   {session.summary && <p>{session.summary}</p>}

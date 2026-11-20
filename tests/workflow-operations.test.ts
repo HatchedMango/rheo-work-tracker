@@ -9,7 +9,13 @@ import { openStore } from '../src/db/index.js';
 import { createApp } from '../src/server/app.js';
 import { createSchema } from '../src/shared/contracts.js';
 import { workflowSetup } from '../src/workflow/setup.js';
-import { reviewWork, beginWork, updateWorkLease } from '../src/workflow/operations.js';
+import {
+  reviewWork,
+  beginWork,
+  updateWorkLease,
+  maintainWorkLease,
+} from '../src/workflow/operations.js';
+import { runHook, saveCheckpointValue } from '../src/workflow/hooks.js';
 import { SyncOutbox } from '../src/workflow/outbox.js';
 import { readSession, sessionPath, withSession } from '../src/workflow/session-state.js';
 const cleanups: (() => Promise<void>)[] = [];
@@ -296,4 +302,117 @@ it('recovers recorded branch work with session precedence and never guesses from
   }
   await runWorkflow(['unbind', '--binding', f.binding, '--branch', 'feature/unfamiliar-name']);
   expect(resolveWorkSelection(opts, f.outbox, {}).selected.changeId).toBeUndefined();
+});
+
+it('maintains only an acknowledged selected active helper lease near expiry without reclaiming or hiding stale readiness', async () => {
+  const f = await fixture();
+  const review = await reviewWork(f.binding, f.session);
+  const begun = await beginWork(f.binding, f.session, judgment(review));
+  expect(readSession(f.outbox, f.session).pendingIntent).toBe('working');
+  const near = async () => {
+    const at = Date.now() + 30_000;
+    f.store.raw
+      .prepare('UPDATE collaboration_claims SET expiresAt=? WHERE id=?')
+      .run(at, begun.claim.id);
+    await withSession(f.outbox, f.session, (s) => {
+      s.begin!.expiresAt = at;
+      delete s.maintenanceAfter;
+    });
+    return at;
+  };
+  expect(await maintainWorkLease(f.binding, f.session)).toBeUndefined();
+  const before = await near();
+  expect(await maintainWorkLease(f.binding, f.session)).toBe('renewed');
+  expect(f.service.get(f.actor, f.change.id).tracking.claim!.expiresAt).toBeGreaterThan(before);
+  expect(f.store.raw.prepare('SELECT count(*) n FROM collaboration_claims').get()).toEqual({
+    n: 1,
+  });
+  await near();
+  await withSession(f.outbox, f.session, (s) => {
+    s.intent = 'reading';
+    delete s.pendingIntent;
+  });
+  expect(await maintainWorkLease(f.binding, f.session)).toBeUndefined();
+  await withSession(f.outbox, f.session, (s) => {
+    s.intent = 'working';
+    s.selected = { streamId: f.stream.id };
+  });
+  await expect(maintainWorkLease(f.binding, f.session)).rejects.toThrow('select a change');
+  await withSession(f.outbox, f.session, (s) => {
+    delete s.selected;
+  });
+  f.service.create(
+    f.actor,
+    createSchema.parse({
+      title: 'New relevant work',
+      objective: 'Reassess',
+      streamId: f.stream.id,
+    }),
+  );
+  expect(await maintainWorkLease(f.binding, f.session)).toContain('not renewed');
+  await near();
+  f.store.raw
+    .prepare("UPDATE collaboration_claims SET state='expired' WHERE id=?")
+    .run(begun.claim.id);
+  expect(await maintainWorkLease(f.binding, f.session)).toBe('inactive');
+  expect(f.store.raw.prepare('SELECT count(*) n FROM collaboration_claims').get()).toEqual({
+    n: 1,
+  });
+  expect(f.service.get(f.actor, f.change.id).tracking.progress).not.toBe('delivered');
+});
+it('does not renew a foreign claim or continue after selection drifts during a lease lookup', async () => {
+  const f = await fixture();
+  const review = await reviewWork(f.binding, f.session);
+  const begun = await beginWork(f.binding, f.session, judgment(review));
+  await withSession(f.outbox, f.session, (s) => {
+    s.begin!.expiresAt = Date.now() + 10_000;
+  });
+  f.store.raw
+    .prepare('UPDATE collaboration_claims SET expiresAt=? WHERE id=?')
+    .run(Date.now() + 10_000, begun.claim.id);
+  const original = globalThis.fetch;
+  let renews = 0;
+  vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+    if (String(args[0]).includes('/api/claims/')) renews++;
+    const response = await original(...args);
+    if (String(args[0]).endsWith('/api/work/' + f.change.id))
+      await withSession(f.outbox, f.session, (s) => {
+        s.selected = { streamId: f.stream.id };
+      });
+    return response;
+  });
+  expect(await maintainWorkLease(f.binding, f.session)).toBeUndefined();
+  expect(renews).toBe(0);
+  vi.unstubAllGlobals();
+  await withSession(f.outbox, f.session, (s) => {
+    delete s.selected;
+    s.begin!.sessionId = randomUUID();
+  });
+  expect(await maintainWorkLease(f.binding, f.session)).toBe('inactive');
+});
+
+it('promotes managed begin at Stop and renews only during live participation', async () => {
+  const f = await fixture();
+  const input = { session_id: f.session, hook_event_name: 'SessionStart' };
+  await runHook(f.binding, input);
+  expect(f.sync.session(f.actor, f.session)?.intent).toBe('reading');
+  const review = await reviewWork(f.binding, f.session);
+  const begun = await beginWork(f.binding, f.session, judgment(review));
+  const at = Date.now() + 30_000;
+  f.store.raw
+    .prepare('UPDATE collaboration_claims SET expiresAt=? WHERE id=?')
+    .run(at, begun.claim.id);
+  await withSession(f.outbox, f.session, (s) => {
+    s.begin!.expiresAt = at;
+  });
+  expect(await runHook(f.binding, { ...input, hook_event_name: 'Stop' })).toHaveProperty(
+    'decision',
+    'block',
+  );
+  expect(f.service.get(f.actor, f.change.id).tracking.claim!.expiresAt).toBe(at);
+  await saveCheckpointValue(f.binding, { summary: 'Actual result and next step' }, f.session);
+  const prompt = await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' });
+  expect(prompt.hookSpecificOutput?.additionalContext).toContain('renewed');
+  expect(f.service.get(f.actor, f.change.id).tracking.claim!.expiresAt).toBeGreaterThan(at);
+  await updateWorkLease(f.binding, f.session, true);
 });
