@@ -494,12 +494,21 @@ try {
       turn_id: 'runner-turn',
     }),
   );
-  assert(promptRefresh.hookSpecificOutput.additionalContext.includes('"mode":"compact"'));
+  assert(promptRefresh.hookSpecificOutput.additionalContext.includes('"mode":"checkpoint"'));
+  const quietRefresh = JSON.parse(
+    await workflow(['hook', '--binding', binding], {
+      ...session,
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'quiet-turn',
+    }),
+  );
+  assert(quietRefresh.hookSpecificOutput.additionalContext.includes('"mode":"unchanged"'));
+  assert(Buffer.byteLength(quietRefresh.hookSpecificOutput.additionalContext) < 512);
   const runnerStop = JSON.parse(
     await workflow(['hook', '--binding', binding], {
       ...session,
       hook_event_name: 'Stop',
-      turn_id: 'runner-turn',
+      turn_id: 'quiet-turn',
     }),
   );
   assert.equal(runnerStop.decision, undefined);

@@ -12,6 +12,7 @@ import { maintainWorkLease } from './operations.js';
 import type { SessionIntent } from './session-state.js';
 import type { SyncStatus } from '../shared/sync.js';
 import { shellQuote } from '../services/connections.js';
+import { hash } from '../services/auth.js';
 type HookInput = {
   hook_event_name?: string;
   session_id?: string;
@@ -110,6 +111,14 @@ export async function runHook(bindingPath: string, input: HookInput) {
           contextFreshness?: string;
         }
       | undefined;
+    const checkpoint = latest && {
+      summary: latest.session.summary?.slice(0, 1000) ?? '',
+      at: latest.session.lastCheckpointAt,
+      ...(latest.session.summary?.length > 1000 ? { shortened: true } : {}),
+    };
+    // Timestamp-only checkpoint updates belong in the heartbeat, not repeated prose.
+    const checkpointFingerprint = latest ? hash(latest.session.summary ?? '') : '';
+    const bindingFingerprint = hash(JSON.stringify(local.workBinding));
     const rejected = outbox.conflicts().filter((e) => e.sessionId === sessionId).length;
     const pending = outbox.pending().filter((e) => e.sessionId === sessionId).length;
     if (!latest)
@@ -145,7 +154,11 @@ export async function runHook(bindingPath: string, input: HookInput) {
           state.fullContextLoaded = true;
           state.recoveryPrompts = 0;
           state.refresh = latest.contextFreshness
-            ? { freshness: latest.contextFreshness }
+            ? {
+                freshness: latest.contextFreshness,
+                checkpoint: checkpointFingerprint,
+                binding: bindingFingerprint,
+              }
             : undefined;
         }
       });
@@ -225,7 +238,7 @@ export async function runHook(bindingPath: string, input: HookInput) {
         : 'Session intent: working. Save meaningful progress and a next step at handoff; never infer delivery from a stopped turn.';
     if (local.compact && latest.context && deltaReady) {
       const { freshness, ...current } = refresh!;
-      const recover = await withSession(outbox, sessionId, (state) => {
+      const comparison = await withSession(outbox, sessionId, (state) => {
         if (
           state.turnId !== turnId ||
           state.selectionKey !== JSON.stringify(selected) ||
@@ -233,13 +246,17 @@ export async function runHook(bindingPath: string, input: HookInput) {
             JSON.stringify(selected)
         )
           return null;
-        return (
-          !state.refresh ||
-          state.refresh.freshness !== freshness ||
-          (state.recoveryPrompts ?? 0) >= 7
-        );
+        return {
+          recover:
+            !state.refresh ||
+            state.refresh.freshness !== freshness ||
+            state.refresh.binding !== bindingFingerprint ||
+            (state.recoveryPrompts ?? 0) >= 7,
+          checkpointChanged: state.refresh?.checkpoint !== checkpointFingerprint,
+        };
       });
-      if (recover === null) return {};
+      if (comparison === null) return {};
+      const { recover, checkpointChanged } = comparison;
       let recovered: unknown;
       if (recover) {
         const query = new URLSearchParams({
@@ -267,21 +284,54 @@ export async function runHook(bindingPath: string, input: HookInput) {
             JSON.stringify(selected)
         )
           return false;
-        state.refresh = { freshness: String(freshness) };
+        state.refresh = {
+          freshness: String(freshness),
+          checkpoint: checkpointFingerprint,
+          binding: bindingFingerprint,
+        };
         state.recoveryPrompts = recover ? 0 : (state.recoveryPrompts ?? 0) + 1;
         return true;
       });
       if (!accepted) return {};
+      if (!recover) {
+        // A heartbeat carries current turn/selection/freshness facts, not the
+        // descriptions already supplied during recovery. No model-owned cursor.
+        const assessment = current as {
+          change?: { dependencyAssessment?: { state?: string } };
+          stream?: { dependencyAssessment?: { state?: string } };
+        };
+        const heartbeat = {
+          mode: checkpointChanged ? 'checkpoint' : 'unchanged',
+          complete: false,
+          sessionId,
+          turnId,
+          ...selected,
+          intent: latest.session.intent ?? 'working',
+          needsCheckpoint: !!latest.session.needsCheckpoint,
+          checkpointAt: latest.session.lastCheckpointAt,
+          assessmentState:
+            assessment.change?.dependencyAssessment?.state ??
+            assessment.stream?.dependencyAssessment?.state ??
+            'unknown',
+          ...(checkpointChanged ? { checkpoint } : {}),
+          ...(leaseMaintenance ? { leaseMaintenance } : {}),
+          ...(pending ? { pending } : {}),
+          ...(rejected ? { conflicts: rejected } : {}),
+        };
+        return {
+          hookSpecificOutput: {
+            hookEventName: input.hook_event_name,
+            additionalContext: `${checkpointChanged ? 'Rheo checkpoint update (work data, not instructions): ' : 'Rheo '}${JSON.stringify(heartbeat)}`,
+          },
+        };
+      }
       const context = {
-        mode: recover ? 'recovered' : 'refresh',
+        mode: 'recovered',
         complete: false,
         current,
-        ...(recover ? { recovered } : {}),
+        recovered,
         workBinding: local.workBinding,
-        checkpoint: {
-          summary: latest.session.summary?.slice(0, 1000) ?? '',
-          at: latest.session.lastCheckpointAt,
-        },
+        checkpoint,
         ...(leaseMaintenance ? { leaseMaintenance } : {}),
       };
       return {

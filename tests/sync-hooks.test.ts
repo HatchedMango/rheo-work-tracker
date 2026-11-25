@@ -306,7 +306,7 @@ it('uses compact prompts, full recovery, and keeps older turn notifications from
     const input = { session_id: 'recover', turn_id: 'current' };
     await runHook(f.binding, { ...input, hook_event_name: 'SessionStart', source: 'startup' });
     const refresh = await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' });
-    expect(refresh.hookSpecificOutput?.additionalContext).toContain('"mode":"compact"');
+    expect(refresh.hookSpecificOutput?.additionalContext).toContain('"mode":"unchanged"');
     const recovery = await runHook(f.binding, {
       ...input,
       hook_event_name: 'SessionStart',
@@ -472,7 +472,7 @@ it('keeps unselected prompts and stop hooks quiet while recovering selection gui
     expect(
       (await runHook(f.binding, { ...session, hook_event_name: 'UserPromptSubmit' }))
         .hookSpecificOutput?.additionalContext,
-    ).toContain(f.stream.title);
+    ).toContain(f.stream.id);
     expect(await runHook(f.binding, { ...session, hook_event_name: 'PostCompact' })).toEqual({});
     expect(readSession(outbox, session.session_id).fullContextLoaded).toBe(false);
     const recovered = await runHook(f.binding, {
@@ -536,23 +536,36 @@ it('persists project checkpoint preferences across sessions and setup while hono
   }
 });
 
-it('supplies current facts and recovers hidden changes and lost context without agent hash bookkeeping', async () => {
+it('keeps unchanged prompts small and recovers hidden changes without agent hash bookkeeping', async () => {
   const f = await fixture();
   try {
     await f.app.listen({ port: f.port, host: '127.0.0.1' });
     const input = { session_id: 'refresh-chat', hook_event_name: 'UserPromptSubmit' };
     const context = async (turn: string) =>
       (await runHook(f.binding, { ...input, turn_id: turn })).hookSpecificOutput!.additionalContext;
-    const parse = (s: string) => JSON.parse(s.split('\n')[1]);
+    const parse = (s: string) => {
+      const line = s.split('\n').find((line) => line.includes('{"mode"'))!;
+      return JSON.parse(line.slice(line.indexOf('{')));
+    };
     await runHook(f.binding, { ...input, hook_event_name: 'SessionStart', source: 'startup' });
-    expect(parse(await context('one')).mode).toBe('refresh');
+    expect(parse(await context('one')).mode).toBe('unchanged');
     const unchanged = await context('two');
     expect(parse(unchanged)).toMatchObject({
-      mode: 'refresh',
-      current: { stream: { id: f.stream.id } },
+      mode: 'unchanged',
+      streamId: f.stream.id,
+      complete: false,
+      assessmentState: 'unassessed',
     });
-    expect(Buffer.byteLength(unchanged)).toBeLessThan(3000);
+    expect(Buffer.byteLength(unchanged)).toBeLessThan(512);
     expect(unchanged).not.toMatch(/"cursor"|"base"|"freshness"|last cursor/);
+    const outbox = new SyncOutbox(f.credentialFile, f.dir, 'codex');
+    await withSession(outbox, input.session_id, (state) => {
+      state.selected = { streamId: f.stream.id };
+    });
+    expect(parse(await context('binding-drift'))).toMatchObject({
+      mode: 'recovered',
+      workBinding: { source: 'session' },
+    });
     f.streams.recordContext(f.agent, f.stream.id, {
       kind: 'decision',
       body: 'A new decision outside the compact request list.',
@@ -568,7 +581,8 @@ it('supplies current facts and recovers hidden changes and lost context without 
     });
     expect(await context('three')).toContain('A retained decision');
     // No delivery acknowledgement exists: periodic recovery bounds a lost unchanged injection.
-    for (let i = 0; i < 7; i++) expect(parse(await context('periodic-' + i)).mode).toBe('refresh');
+    for (let i = 0; i < 7; i++)
+      expect(parse(await context('periodic-' + i)).mode).toBe('unchanged');
     expect(parse(await context('periodic-full')).mode).toBe('recovered');
     const full = (
       await runHook(f.binding, {
@@ -579,7 +593,7 @@ it('supplies current facts and recovers hidden changes and lost context without 
       })
     ).hookSpecificOutput!.additionalContext;
     expect(full).toContain('A retained decision');
-    expect(parse(await context('after-compact')).mode).toBe('refresh');
+    expect(parse(await context('after-compact')).mode).toBe('unchanged');
   } finally {
     await f.app.close();
     f.store.close();
@@ -733,6 +747,147 @@ it('does not advance refresh state after a failed recovery or emit a response fo
     expect(
       await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit', turn_id: 'drift' }),
     ).toEqual({});
+    expect(readSession(outbox, input.session_id).refresh).toBeUndefined();
+  } finally {
+    vi.unstubAllGlobals();
+    await f.app.close();
+    f.store.close();
+  }
+});
+
+it.each([
+  ['codex', 'working'],
+  ['claude-code', 'reading'],
+] as const)(
+  'bounds quiet %s prompts with heavy work and sends checkpoint prose only on change',
+  async (client, intent) => {
+    const f = await fixture(client, intent);
+    try {
+      const s = f.streams.submit(f.agent, {
+        title: 'Heavy goal '.repeat(15),
+        outcome: 'outcome '.repeat(900),
+        context: 'context '.repeat(700),
+        idempotencyKey: randomUUID(),
+      });
+      const w = f.service.create(
+        f.agent,
+        createSchema.parse({
+          title: 'Heavy work '.repeat(15),
+          objective: 'objective '.repeat(700),
+          streamId: s.id,
+        }),
+      );
+      f.streams.updateChange(f.agent, w.id, {
+        revision: w.tracking.revision,
+        progress: 'planned',
+        progressNote: 'progress '.repeat(300),
+      });
+      for (let i = 0; i < 4; i++) {
+        f.streams.recordContext(f.agent, s.id, {
+          kind: 'question',
+          body: ('question ' + i + ' ').repeat(300),
+          needsHuman: true,
+          idempotencyKey: randomUUID(),
+        });
+        f.oversight.createAction(f.agent, {
+          streamId: s.id,
+          title: ('action ' + i + ' ').repeat(15),
+          doneWhen: 'Access exists',
+          idempotencyKey: randomUUID(),
+        });
+      }
+      await f.app.listen({ port: f.port, host: '127.0.0.1' });
+      const session = randomUUID(),
+        input = { hook_event_name: 'UserPromptSubmit', session_id: session };
+      await selectWork(f.binding, session, { streamId: s.id, changeId: w.id });
+      const summary = 'A retained checkpoint with meaningful next steps. '.repeat(50);
+      if (intent === 'working') {
+        const { saveCheckpointValue } = await import('../src/workflow/hooks.js');
+        await saveCheckpointValue(f.binding, { summary }, session);
+      }
+      // Full startup/resume includes the saved checkpoint and seeds the comparison.
+      await runHook(f.binding, { ...input, hook_event_name: 'SessionStart', source: 'resume' });
+      const quiet = await runHook(f.binding, { ...input, turn_id: randomUUID() });
+      const text = quiet.hookSpecificOutput!.additionalContext;
+      expect(Buffer.byteLength(text)).toBeLessThan(512);
+      expect(Buffer.byteLength(JSON.stringify(quiet))).toBeLessThan(640);
+      expect(text).toContain('"mode":"unchanged"');
+      expect(text).not.toMatch(
+        /outcome |objective |progress |A retained checkpoint|workBinding|last cursor|"freshness"/,
+      );
+      expect(text).toContain(`"intent":"${intent}"`);
+      const changedSummary = 'New handoff after the quiet prompt. '.repeat(50);
+      const { saveCheckpointValue } = await import('../src/workflow/hooks.js');
+      await saveCheckpointValue(f.binding, { summary: changedSummary }, session);
+      const changed = await runHook(f.binding, { ...input, turn_id: randomUUID() });
+      expect(changed.hookSpecificOutput!.additionalContext).toContain('"mode":"checkpoint"');
+      expect(changed.hookSpecificOutput!.additionalContext).toContain('New handoff');
+      expect(changed.hookSpecificOutput!.additionalContext).toContain('"shortened":true');
+      expect(changed.hookSpecificOutput!.additionalContext).not.toContain('objective ');
+      const again = (await runHook(f.binding, { ...input, turn_id: randomUUID() }))
+        .hookSpecificOutput!.additionalContext;
+      expect(Buffer.byteLength(again)).toBeLessThan(512);
+      expect(again).not.toContain('New handoff');
+      const timestamp = f.sync.session(f.agent, session)!.lastCheckpointAt;
+      await saveCheckpointValue(f.binding, { summary: changedSummary }, session);
+      const timestampOnly = (await runHook(f.binding, { ...input, turn_id: randomUUID() }))
+        .hookSpecificOutput!.additionalContext;
+      expect(timestampOnly).toContain('"mode":"unchanged"');
+      expect(timestampOnly).not.toContain('New handoff');
+      expect(f.sync.session(f.agent, session)!.lastCheckpointAt).toBeGreaterThanOrEqual(timestamp!);
+    } finally {
+      await f.app.close();
+      f.store.close();
+    }
+  },
+);
+
+it('keeps conflict and unknown-freshness evidence visible instead of emitting a clean heartbeat', async () => {
+  const f = await fixture('claude-code', 'reading');
+  try {
+    await f.app.listen({ port: f.port, host: '127.0.0.1' });
+    const input = { session_id: 'heartbeat-conflict', hook_event_name: 'SessionStart' };
+    await runHook(f.binding, input);
+    const outbox = new SyncOutbox(f.credentialFile, f.dir, 'claude-code');
+    outbox.enqueue({
+      eventId: randomUUID(),
+      sessionId: input.session_id,
+      client: 'claude-code',
+      project: f.dir,
+      streamId: f.stream.id,
+      turnId: 'older-turn',
+      event: 'checkpoint',
+      occurredAt: Date.now(),
+      checkpoint: { summary: 'A stale write to reconcile' },
+    });
+    const current = (await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' }))
+      .hookSpecificOutput!.additionalContext;
+    expect(current).toContain('"conflicts":1');
+    expect(current).toContain('"needsCheckpoint":false');
+    expect(current).not.toContain('A stale write');
+    const stop = await runHook(f.binding, { ...input, hook_event_name: 'Stop' });
+    expect(stop).not.toHaveProperty('decision');
+    expect(stop).toHaveProperty('systemMessage', expect.stringContaining('conflicted'));
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', async (...args: Parameters<typeof fetch>) => {
+      const response = await original(...args);
+      if (String(args[0]).endsWith('/api/sync/events')) {
+        const data = await response.clone().json();
+        if (data.context) {
+          delete data.context.freshness;
+          delete data.contextFreshness;
+          return new Response(JSON.stringify(data), {
+            status: response.status,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+      return response;
+    });
+    const unknown = (await runHook(f.binding, { ...input, hook_event_name: 'UserPromptSubmit' }))
+      .hookSpecificOutput!.additionalContext;
+    expect(unknown).not.toContain('"mode":"unchanged"');
+    expect(unknown).toContain('"mode":"compact"');
     expect(readSession(outbox, input.session_id).refresh).toBeUndefined();
   } finally {
     vi.unstubAllGlobals();

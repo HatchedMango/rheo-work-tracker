@@ -2,7 +2,7 @@ import { requestGuidanceSchema, type RequestGuidance } from './request-guidance.
 import { z } from 'zod';
 import { conversationUrlSchema } from './conversation-schema.js';
 import { referenceSchema } from './contracts.js';
-export const WORKFLOW_VERSION = '1.10.0';
+export const WORKFLOW_VERSION = '1.11.0';
 export const streamScopeSchema = z.object({
   title: z.string().trim().min(1).max(180),
   outcome: z.string().trim().min(1).max(8000),
