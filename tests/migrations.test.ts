@@ -598,3 +598,46 @@ it('adds empty request guidance without rewriting legacy request content, state 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it('adds design records without rewriting legacy tables or granting completion credit', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rheo-design-migration-')),
+    path = join(dir, 'db.sqlite');
+  let store = openStore(path);
+  try {
+    const auth = new Auth(store),
+      agent = auth.actor(auth.register('agent', 'Existing agent').secret, 'bearer'),
+      service = new WorkService(store);
+    service.create(
+      agent,
+      createSchema.parse({
+        title: 'Existing text criteria',
+        objective: 'Preserve legacy content',
+        acceptanceCriteria: ['An exact original criterion.'],
+      }),
+    );
+    store.raw.exec('DROP TABLE assumption_reviews; DROP TABLE design_records;');
+    store.raw.prepare('DELETE FROM schema_migrations WHERE name=?').run('0017_design_context.sql');
+    const names = (
+      store.raw
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name<>'schema_migrations' ORDER BY name",
+        )
+        .all() as { name: string }[]
+    ).map((x) => x.name);
+    const before = names.map((name) => ({
+      name,
+      rows: store.raw.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all(),
+    }));
+    store.close();
+    store = openStore(path);
+    for (const table of before)
+      expect(store.raw.prepare(`SELECT * FROM "${table.name}" ORDER BY rowid`).all()).toEqual(
+        table.rows,
+      );
+    expect(store.raw.prepare('SELECT count(*) n FROM design_records').get()).toEqual({ n: 0 });
+    expect(store.raw.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

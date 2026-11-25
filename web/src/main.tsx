@@ -814,7 +814,12 @@ function App() {
                                   <span>{time(e.createdAt)}</span>
                                 </div>
                                 <ActivityContent text={e.message} />
-                                {e.type === 'edited' && <ContextChanges data={e.data} />}
+                                {(e.type === 'edited' || e.type === 'design_context_changed') && (
+                                  <ContextChanges
+                                    data={e.data}
+                                    design={e.type === 'design_context_changed'}
+                                  />
+                                )}
                                 {e.references.map((r, i) => (
                                   <a
                                     key={i}

@@ -1,3 +1,4 @@
+import { DesignContextService } from './design-context.js';
 import { isAbsolute } from 'node:path';
 import { statSync } from 'node:fs';
 import type { z } from 'zod';
@@ -111,6 +112,7 @@ export class WorkChatService {
       title: w.title,
       goal: clip(w.objective, 1800),
       doneWhen: w.acceptanceCriteria.slice(0, 8).map((x) => clip(x, 180)),
+      designContext: new DesignContextService(this.streams).summary(a, { kind: 'change', id }),
       expectedOutput: clip(w.tracking.expectedOutput, 500),
       latestReport: clip(w.tracking.progressNote, 700),
       stream: s

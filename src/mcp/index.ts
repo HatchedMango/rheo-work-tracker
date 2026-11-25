@@ -1,3 +1,4 @@
+import * as designContracts from '../shared/design-context.js';
 import * as assessmentContracts from '../shared/dependency-assessments.js';
 import * as c from '../shared/streams.js';
 import * as o from '../shared/oversight.js';
@@ -56,6 +57,61 @@ async function result(tool: string, fn: () => Promise<unknown>) {
     };
   }
 }
+server.registerTool(
+  'save_design_record',
+  {
+    description:
+      'Record or revise an assumption, scoped invariant or criterion verification. Expected revisions and reasons retain semantic history. Assumptions name evidence and invalidation conditions; invariant inheritance is opt-in. Verification is attributed evidence under stated conditions and limitations, never blanket proof or automatic delivery.',
+    inputSchema: designContracts.saveDesignRecordSchema.shape,
+  },
+  (args) =>
+    result('save_design_record', () =>
+      request('/api/design-records', designContracts.saveDesignRecordSchema.parse(args)),
+    ),
+);
+server.registerTool(
+  'get_design_context',
+  {
+    description:
+      'Read scoped design records and assumption review flags, following both pagination cursors. Includes explicitly linked assumptions and active opt-in ancestor invariants. Does not change lifecycle or establish readiness.',
+    inputSchema: designContracts.designQuerySchema.shape,
+  },
+  (args) =>
+    result('get_design_context', () => {
+      const p = designContracts.designQuerySchema.parse(args);
+      return request(
+        `/api/design-context?kind=${p.target.kind}&id=${p.target.id}&limit=${p.limit}&offset=${p.offset}`,
+      );
+    }),
+);
+server.registerTool(
+  'get_design_record',
+  {
+    description:
+      'Retrieve a full design record by ID, including a paged list of work explicitly depending on an assumption. Follow dependents.nextOffset to inspect all affected work.',
+    inputSchema: {
+      id: z.uuid(),
+      limit: z.number().int().min(1).max(30).default(12),
+      offset: z.number().int().min(0).max(100000).default(0),
+    },
+  },
+  ({ id, limit, offset }) =>
+    result('get_design_record', () =>
+      request(`/api/design-records/${id}?limit=${limit}&offset=${offset}`),
+    ),
+);
+server.registerTool(
+  'review_assumption',
+  {
+    description:
+      'Explicitly connect a change to an assumption revision and record its impact review. Revision zero creates the link. Later assumption edits flag the change for review without invalidating outputs, changing lifecycle or asking the human. A new review acknowledges the current revision; it does not change source truth.',
+    inputSchema: designContracts.reviewAssumptionSchema.shape,
+  },
+  (args) =>
+    result('review_assumption', () =>
+      request('/api/assumption-reviews', designContracts.reviewAssumptionSchema.parse(args)),
+    ),
+);
 server.registerTool(
   'create_work',
   {

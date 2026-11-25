@@ -1,3 +1,4 @@
+import { DesignContextView } from './DesignContext.js';
 import { RequestInstructions } from './RequestInstructions.js';
 import type { RequestGuidance } from '../../src/shared/request-guidance.js';
 import { StartWork } from './StartWork.js';
@@ -554,6 +555,13 @@ export function StreamWorkMap({
                   limit={220}
                 />
               </div>
+            )}
+            {(selected.kind === 'stream' || selected.kind === 'change') && (
+              <DesignContextView
+                target={{ kind: selected.kind, id: selected.id }}
+                version={selected.designContextVersion ?? ''}
+                request={request}
+              />
             )}
             {selected.dependencyAssessment && (
               <DependencyAssessmentView assessment={selected.dependencyAssessment} />

@@ -1,3 +1,5 @@
+import { designVersion } from './design-context-data.js';
+import { DesignContextService } from './design-context.js';
 import { readRequestGuidance } from '../shared/request-guidance.js';
 import {
   readDependencyAssessment,
@@ -100,6 +102,7 @@ export class StreamService {
     const assessmentFingerprint = flowFingerprint(this.work.store, { id, kind: 'stream' });
     return {
       ...row,
+      designContextVersion: designVersion(this.work.store, { kind: 'stream', id }),
       pendingScope: row.pendingScope ? JSON.parse(row.pendingScope) : null,
       coverage: row.coverageApprovalId
         ? effectiveCoverage(this.work.store, id, row.coverageApprovalId)
@@ -1046,6 +1049,10 @@ export class StreamService {
           nextOffset: null as number | null,
         },
         changes: { items: changes, total: allChanges.total, nextOffset: null as number | null },
+        designContext: new DesignContextService(this).summary(a, {
+          kind: change ? 'change' : 'stream',
+          id: (change?.id ?? streamId)!,
+        }),
         history: streamId ? `/api/streams/${streamId}/events` : null,
         provenance:
           'Summaries may shorten fields; retrieve full records by ID. Progress, output state, and prerequisite satisfaction are attributed reports, not independent observations or human acceptance.',

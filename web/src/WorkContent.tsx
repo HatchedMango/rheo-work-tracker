@@ -113,21 +113,46 @@ export const ActivityContent = memo(function ActivityContent({ text }: { text: s
     </div>
   );
 });
-export function ContextChanges({ data }: { data: Record<string, unknown> }) {
+export function ContextChanges({
+  data,
+  design = false,
+}: {
+  data: Record<string, unknown>;
+  design?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const before =
     data.before && typeof data.before === 'object' ? (data.before as Record<string, unknown>) : {};
   const after =
     data.after && typeof data.after === 'object' ? (data.after as Record<string, unknown>) : {};
-  const fields = {
-    title: 'Title',
-    objective: 'Details',
-    acceptanceCriteria: 'Done when',
-    priority: 'Priority',
-    references: 'References',
-  };
+  const fields: Record<string, string> = design
+    ? {
+        statement: 'Statement',
+        status: 'Status',
+        evidence: 'Evidence',
+        invalidatedBy: 'Invalidated by',
+        applicability: 'Applies to',
+        inherit: 'Include descendants',
+        criterion: 'Criterion',
+        result: 'Result',
+        method: 'Method',
+        conditions: 'Conditions',
+        limitations: 'Limitations',
+        codeRevision: 'Code revision',
+        checkedAt: 'Checked at',
+        references: 'References',
+      }
+    : {
+        title: 'Title',
+        objective: 'Details',
+        acceptanceCriteria: 'Done when',
+        priority: 'Priority',
+        references: 'References',
+      };
   function display(value: unknown): string {
     if (typeof value === 'string') return value;
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    if (typeof value === 'number') return String(value);
     if (!Array.isArray(value)) return 'None';
     return (
       value

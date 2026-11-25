@@ -1,3 +1,4 @@
+import { DesignContextView } from './DesignContext.js';
 import { RequestInstructions } from './RequestInstructions.js';
 import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { StreamWorkMap } from './WorkMap.js';
@@ -16,7 +17,7 @@ import {
 import type { Stream, ContextEntry, Output } from '../../src/shared/streams.js';
 import type { AttentionItem, HumanAction } from '../../src/shared/oversight.js';
 import type { OversightService } from '../../src/services/oversight.js';
-import { WorkContent, BriefContent, briefText } from './WorkContent.js';
+import { ContextChanges, WorkContent, BriefContent, briefText } from './WorkContent.js';
 type Request = <T>(path: string, body?: unknown) => Promise<T>;
 type Overview = ReturnType<OversightService['overview']>;
 type StreamDetail = ReturnType<OversightService['detail']>;
@@ -381,6 +382,11 @@ export function Oversight({
             </details>
           )}
 
+          <DesignContextView
+            target={{ kind: 'stream', id: s.id }}
+            version={`${s.revision}:${s.designContextVersion ?? ''}`}
+            request={request}
+          />
           {s.context && <WorkContent text={s.context} />}
           {detail.entries.items.map((e) => (
             <article className="context-entry" key={e.id}>
@@ -550,7 +556,14 @@ function ResolvedAction({
 }
 function StreamHistory({ id, request }: { id: string; request: Request }) {
   const [events, setEvents] = useState<{
-      items: { id: string; message: string; actorName: string; createdAt: number }[];
+      items: {
+        id: string;
+        message: string;
+        actorName: string;
+        createdAt: number;
+        type: string;
+        data: Record<string, unknown>;
+      }[];
       total: number;
     } | null>(null),
     [offset, setOffset] = useState(0),
@@ -575,6 +588,7 @@ function StreamHistory({ id, request }: { id: string; request: Request }) {
       {events?.items.map((e) => (
         <div key={e.id} className="context-entry">
           <p>{e.message}</p>
+          {e.type === 'design_context_changed' && <ContextChanges data={e.data} design />}
           <small>
             {e.actorName} · {when(e.createdAt)}
           </small>

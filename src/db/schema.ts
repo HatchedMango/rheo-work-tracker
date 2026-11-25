@@ -1,4 +1,11 @@
-import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  sqliteTable,
+  text,
+  integer,
+  index,
+  uniqueIndex,
+  primaryKey,
+} from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import type { Content } from '../shared/contracts.js';
 export const workspaces = sqliteTable('workspaces', {
@@ -513,4 +520,44 @@ export const sessionWork = sqliteTable(
     index('session_work_stream').on(t.streamId, t.lastSeenAt),
     index('session_work_change').on(t.changeId, t.lastSeenAt),
   ],
+);
+
+export const designRecords = sqliteTable(
+  'design_records',
+  {
+    id: text().primaryKey(),
+    targetKind: text().notNull(),
+    targetId: text().notNull(),
+    kind: text().notNull(),
+    content: text().notNull(),
+    revision: integer().notNull().default(1),
+    createdBy: text()
+      .notNull()
+      .references(() => actors.id),
+    updatedBy: text()
+      .notNull()
+      .references(() => actors.id),
+    createdAt: integer().notNull(),
+    updatedAt: integer().notNull(),
+  },
+  (t) => [index('design_records_target').on(t.targetKind, t.targetId, t.kind)],
+);
+export const assumptionReviews = sqliteTable(
+  'assumption_reviews',
+  {
+    changeId: text()
+      .notNull()
+      .references(() => work.id),
+    assumptionId: text()
+      .notNull()
+      .references(() => designRecords.id),
+    assumptionRevision: integer().notNull(),
+    revision: integer().notNull().default(1),
+    note: text().notNull(),
+    reviewedBy: text()
+      .notNull()
+      .references(() => actors.id),
+    reviewedAt: integer().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.changeId, t.assumptionId] })],
 );

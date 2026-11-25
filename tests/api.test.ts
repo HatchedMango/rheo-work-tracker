@@ -374,3 +374,99 @@ it('normal app exposes no execution worker and rejects simulation approval/claim
   });
   expect(completed.json().lifecycle).toBe('completed');
 });
+
+it('protects design context writes and reports assumption review changes over HTTP', async () => {
+  const token = ctx.auth.register('agent', 'Design author').secret;
+  const headers = { host, authorization: `Bearer ${token}` };
+  const post = async (url: string, payload: unknown) =>
+    ctx.app.inject({ method: 'POST', url, headers, payload: payload as object });
+  const w = (
+    await post('/api/work', {
+      title: 'A scoped change',
+      objective: 'Keep assumptions visible',
+      acceptanceCriteria: ['A safe result'],
+    })
+  ).json();
+  const payload = {
+    target: { kind: 'change', id: w.id },
+    record: {
+      kind: 'assumption',
+      statement: 'The endpoint remains private.',
+      status: 'unknown',
+      evidence: 'Not tested yet.',
+      invalidatedBy: 'Anonymous access succeeds.',
+    },
+    reason: 'Track the boundary.',
+    idempotencyKey: 'design-create',
+  };
+  expect(
+    (await ctx.app.inject({ url: `/api/design-context?kind=change&id=${w.id}`, headers: { host } }))
+      .statusCode,
+  ).toBe(401);
+  expect(
+    (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/design-records',
+        headers: { host },
+        payload,
+      })
+    ).statusCode,
+  ).toBe(403);
+  const saved = await post('/api/design-records', payload);
+  expect(saved.statusCode).toBe(200);
+  const record = saved.json();
+  expect(
+    (
+      await post('/api/assumption-reviews', {
+        changeId: w.id,
+        assumptionId: record.id,
+        assumptionRevision: 1,
+        revision: 0,
+        note: 'The implementation depends on privacy.',
+        idempotencyKey: 'review',
+      })
+    ).json().needsReview,
+  ).toBe(false);
+  expect(
+    (
+      await post('/api/design-records', {
+        ...payload,
+        id: record.id,
+        revision: 1,
+        record: {
+          ...payload.record,
+          status: 'invalidated',
+          evidence: 'Anonymous probe succeeded.',
+        },
+        idempotencyKey: 'design-update',
+      })
+    ).statusCode,
+  ).toBe(200);
+  const page = (
+    await ctx.app.inject({ url: `/api/design-context?kind=change&id=${w.id}`, headers })
+  ).json();
+  expect(page.reviews[0].needsReview).toBe(true);
+  expect(
+    (await ctx.app.inject({ url: `/api/design-records/${record.id}`, headers })).json().revision,
+  ).toBe(2);
+  expect(
+    (
+      await post('/api/design-records', {
+        ...payload,
+        id: record.id,
+        revision: 1,
+        idempotencyKey: 'stale',
+      })
+    ).statusCode,
+  ).toBe(409);
+  const worker = ctx.auth.register('worker', 'No design access').secret;
+  expect(
+    (
+      await ctx.app.inject({
+        url: `/api/design-context?kind=change&id=${w.id}`,
+        headers: { host, authorization: `Bearer ${worker}` },
+      })
+    ).statusCode,
+  ).toBe(403);
+});

@@ -58,6 +58,10 @@ it('round trips the work tools over real stdio and HTTP with a scoped agent cred
         'review_dependencies',
         'assess_dependencies',
         'check_output',
+        'save_design_record',
+        'get_design_context',
+        'get_design_record',
+        'review_assumption',
       ]),
     );
     expect(tools.find((t) => t.name === 'create_work')?.inputSchema.properties).not.toHaveProperty(
@@ -84,6 +88,50 @@ it('round trips the work tools over real stdio and HTTP with a scoped agent cred
     expect(workflow.loopProtocol).toContain('implement → check → revise');
     expect(workflow.capabilities.clientCheck).toContain('server contract only');
     const w = read(created);
+    const design = read(
+      await client.callTool({
+        name: 'save_design_record',
+        arguments: {
+          target: { kind: 'change', id: w.id },
+          record: {
+            kind: 'assumption',
+            statement: 'The provider accepts private uploads.',
+            status: 'unknown',
+            evidence: 'A provider check remains.',
+            invalidatedBy: 'An unauthenticated read succeeds.',
+          },
+          reason: 'Retain the design dependency.',
+          idempotencyKey: 'mcp-design',
+        },
+      }),
+    );
+    expect(design.record.kind).toBe('assumption');
+    expect(
+      read(
+        await client.callTool({
+          name: 'review_assumption',
+          arguments: {
+            changeId: w.id,
+            assumptionId: design.id,
+            assumptionRevision: 1,
+            revision: 0,
+            note: 'Check privacy before relying on this endpoint.',
+            idempotencyKey: 'mcp-review',
+          },
+        }),
+      ).needsReview,
+    ).toBe(false);
+    expect(
+      read(await client.callTool({ name: 'get_design_record', arguments: { id: design.id } })).id,
+    ).toBe(design.id);
+    expect(
+      read(
+        await client.callTool({
+          name: 'get_design_context',
+          arguments: { target: { kind: 'change', id: w.id } },
+        }),
+      ).total,
+    ).toBe(1);
     expect(w.ownerId).toBeNull();
     expect(w.assignment.state).toBe('tracked');
     expect(w.attention.map((a: { kind: string }) => a.kind)).toEqual([]);

@@ -3276,3 +3276,20 @@ button svg {
 .work-map-nodes.flow-compact {
   grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 340px));
 }
+
+.design-context {
+  overflow-wrap: anywhere;
+}
+.design-context details > summary {
+  cursor: pointer;
+  line-height: 1.5;
+}
+.design-context h4 {
+  margin: 0.8rem 0 0.3rem;
+}
+.design-review {
+  border-left: 3px solid var(--text-secondary, #827257);
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.7rem;
+  background: var(--surface, #fff);
+}

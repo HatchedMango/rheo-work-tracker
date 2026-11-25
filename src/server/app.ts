@@ -1,3 +1,5 @@
+import { DesignContextService } from '../services/design-context.js';
+import * as designContracts from '../shared/design-context.js';
 import { WorkChatService } from '../services/work-chat.js';
 import { OutputEvidenceService } from '../services/output-evidence.js';
 import type { GitLabKeychain } from '../services/keychain.js';
@@ -70,6 +72,7 @@ export async function createApp(
   const auth = new Auth(store, options.clock);
   const service = new WorkService(store, options.clock, options.allowSimulation);
   const streams = new StreamService(service);
+  const design = new DesignContextService(streams);
   const oversight = new OversightService(streams);
   const sync = new SyncService(oversight);
   const workChats = new WorkChatService(streams);
@@ -433,6 +436,32 @@ export async function createApp(
       idOf(req.params),
       streamContracts.outputSchema.parse(req.body),
     ),
+  );
+  app.get('/api/design-context', async (req) => {
+    const q = z
+      .object({
+        kind: z.enum(['stream', 'change']),
+        id: z.uuid(),
+        limit: z.coerce.number().int().min(1).max(30).default(12),
+        offset: z.coerce.number().int().min(0).max(100000).default(0),
+      })
+      .strict()
+      .parse(req.query);
+    return design.list(authenticate(req), {
+      target: { kind: q.kind, id: q.id },
+      limit: q.limit,
+      offset: q.offset,
+    });
+  });
+  app.get('/api/design-records/:id', async (req) => {
+    const p = pageSchema.parse(req.query);
+    return design.read(authenticate(req), idOf(req.params), p.limit, p.offset);
+  });
+  app.post('/api/design-records', async (req) =>
+    design.save(writeActor(req), designContracts.saveDesignRecordSchema.parse(req.body)),
+  );
+  app.post('/api/assumption-reviews', async (req) =>
+    design.review(writeActor(req), designContracts.reviewAssumptionSchema.parse(req.body)),
   );
   app.get('/api/streams/:id/context', async (req) => {
     const p = pageSchema.parse(req.query);

@@ -1,5 +1,6 @@
 import type { FlowEdge, Node } from './oversight.js';
 export type MapNode = {
+  designContextVersion?: string;
   id: string;
   kind: Node['kind'] | 'question';
   groupId: string;

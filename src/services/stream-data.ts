@@ -1,3 +1,4 @@
+import { designVersion } from './design-context-data.js';
 import { readDependencyAssessment, type AssessmentCache } from './dependency-assessments.js';
 import type { Store } from '../db/index.js';
 import type { ChangeTracking, Claim, Output, Dependency } from '../shared/streams.js';
@@ -89,6 +90,7 @@ export function readTracking(
   const assessmentFingerprint = planFingerprint(store, id);
   return {
     ...rest,
+    designContextVersion: designVersion(store, { kind: 'change', id }),
     progress: m.deliveredAt !== null ? 'delivered' : m.progress,
     coverage: effectiveCoverage(store, m.streamId, m.coverageApprovalId),
     prerequisites: flowDependencies(store, id),

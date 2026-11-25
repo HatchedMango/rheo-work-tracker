@@ -1,3 +1,4 @@
+import { DesignContextView } from './DesignContext.js';
 import { DependencyAssessmentView } from './DependencyAssessment.js';
 import { StatusBadge } from './UI.js';
 import { ChevronRight } from 'lucide-react';
@@ -32,6 +33,11 @@ export function ChangeTrackingView({
           <ChevronRight size={14} />
         </button>
       )}
+      <DesignContextView
+        target={{ kind: 'change', id: work.id }}
+        version={`${work.revision}:${m.revision}:${m.designContextVersion ?? ''}`}
+        request={request}
+      />
       {m.progressNote && (
         <section className="detail-section" aria-label="Latest update">
           <h3>Latest update</h3>
